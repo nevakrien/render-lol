@@ -1,0 +1,16 @@
+build/
+releases/
+QuarkPhysics.config
+QuarkPhysics.creator
+QuarkPhysics.cxxflags
+QuarkPhysics.files
+QuarkPhysics.includes
+QuarkPhysics/json/json.hpp.gch
+resources/robotoFont.hpp.gch
+.qtc_clangd/
+.cache/
+.vscode/
+.qtc_clangd/
+QuarkPhysics.creator.user
+*.o
+*.os

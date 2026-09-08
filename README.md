@@ -1,2 +1,130 @@
 # render-lol
-playing around with diffrent rendering methods for fun
+This is a continioustion of https://github.com/nevakrien/lua_game which I kind of did on a whim for learning love2d.
+The core idea of shapes bouncing around with nice effects is apealing.
+
+We are going to be using C++ here because I want a phisics engine that can handle soft bodies. Its also more fun to write custom vulkan piplines (and maybe even something will come out of that).
+
+
+There is no end goal or anything this is merely here as a fun thing to do.
+
+# Basic spec
+The main play area is a closed box of static walls in a constant ratio for all platforms.
+It contains multiple shapes that are each selectable phisics objects. touching/clicking a shape allows a user to drag it around which forces it to move.
+
+Colisions do cool effects and sounds, as well as gather a mostly meaningless score that is kinda just there for fun.
+
+Shapes will spawn and despawn over time for the purpose of varity, we probably want to add a bit more control over what shapes are on the board in the menu, but thats going to be a future problem.
+
+## Desktop sketch
+
+The sketch uses SDL3, Vulkan 1.1 and QuarkPhysics, with rigid and soft circles,
+triangles and rectangles in a fixed 16:9 arena. Drag shapes to pull and throw
+them. Collisions produce expanding rings, short mixed tones and points.
+
+### Build and run
+
+You need a C++17 compiler, CMake 3.22+, Ninja (or another CMake generator),
+Python 3.9+, Vulkan headers/loader and `glslangValidator`. SDL3 and QuarkPhysics
+sources are already vendored in `3rd_party`; CMake does not fetch anything.
+Linux also needs the usual SDL window-system development packages.
+
+For Ubuntu 24.04, a minimal X11-oriented prerequisite set is:
+
+```sh
+sudo apt install build-essential cmake ninja-build python3 libvulkan-dev \
+    glslang-tools libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+    libxi-dev libxfixes-dev libxss-dev libasound2-dev
+```
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j 8
+./build/render-lol
+```
+
+A Vulkan-capable driver is required. On Windows, use a C++ toolchain and the
+Vulkan SDK, with `glslangValidator` on PATH; multi-config generators put the
+executable in `build/Debug` or `build/Release`. The desktop build has been
+verified on Ubuntu; Windows/macOS have not been tested. Apple platforms need
+MoltenVK; the Vulkan setup enables portability enumeration when available.
+
+### Controls
+
+| Input | Action |
+| --- | --- |
+| Left mouse / touch and drag | Grab, pull and release a body |
+| Space | Pause/resume |
+| G | Toggle gravity (off initially) |
+| R | Reset the six starting bodies and score |
+| 1 / 2 / 3 | Spawn a circle / triangle / rectangle in a free area |
+| S | Toggle whether new bodies are rigid or soft (see window title) |
+| W | Show soft-body mesh spokes |
+| M | Mute/unmute |
+| Escape | Quit |
+
+A filled center marker indicates a rigid body; a hollow marker indicates a
+soft body. Spawning is capped at 24 bodies and needs enough empty space.
+Automatic spawning/despawning and a menu are not implemented in this sketch.
+
+### Experiments
+
+- `src/physics.*`: native 2D QuarkPhysics simulation and world-space picking,
+  with no SDL or Vulkan dependency. It advances at 120 Hz. Rendering consumes
+  the same particles and triangle indices used by the physics meshes.
+- `src/render/vulkan.*`: device, swapchain, resize handling, frame submission
+  and the `DrawPass` interface. One frame in flight keeps buffer ownership
+  simple. It uses ordinary Vulkan 1.1 features and no optional wide-line or
+  polygon-wireframe features.
+- `src/render/passes.cpp`: **four independent pipeline instances** for the
+  background, body meshes, additive impact rings and HUD. Each pass owns its
+  resources and draw commands. `installPasses()` chooses their order; a new
+  experiment can use its own shaders, pipeline layout and geometry. They
+  currently share one presentation render pass, not one graphics pipeline.
+  Offscreen/compute experiments would add recording before that render pass.
+- `shaders/`: GLSL compiled and embedded into the executable by CMake, so
+  launching from another directory does not break asset paths. Rebuild after
+  shader edits; live shader reload is not implemented.
+- `src/sound_mixer.*`: a continuous 64-voice synthesizer. Each impact starts a
+  voice immediately; the audio callback sums all active voices into each
+  requested block. Successive contacts overlap rather than queueing complete
+  sounds. If all voices are occupied, the quietest decaying voice is replaced.
+- `src/audio.*`: SDL audio-device callback and synchronization. A missing audio
+  device is allowed; the rest of the toy still runs.
+
+Rigid manifolds, soft-rigid contacts and soft-soft contacts feed a shared
+impact event path. Events use contact onset, relative normal speed and a
+short per-pair cooldown to avoid repeatedly scoring resting contacts.
+
+### Checks
+
+```sh
+ctest --test-dir build --output-on-failure
+./build/render-lol --validate --smoke --capture build/sketch.ppm
+```
+
+`--validate` requires `VK_LAYER_KHRONOS_validation` (Ubuntu package
+`vulkan-validationlayers`). The smoke mode runs 240 frames, drags rigid and
+soft bodies, resizes twice and exits. `--frames N` controls a finite run;
+`--capture path.ppm` saves its final frame, or the first frame of an unlimited
+run. Capture requires a swapchain format that supports readback.
+
+Headless tests exercise all three collision pair types, impact events,
+rigid/soft picking and dragging, reset, and 30 simulated seconds of a mixed
+world under gravity. Audio tests verify staggered contacts overlap
+sample-for-sample, voice completion, dense mixes and clearing voices.
+
+### Keeping Android open
+
+The physics and mixer are platform-independent, pointer input also accepts
+SDL touch events, and the view letterboxes to preserve the arena ratio.
+Shaders are embedded. CMake selects `libmain.so` and shared SDL3 on Android,
+with position-independent libraries. The event loop stops simulation while
+backgrounded and refreshes presentation on return.
+
+There is **no tested APK target yet**. The next step is to use the vendored
+`3rd_party/SDL/android-project` Gradle/SDLActivity template, point its external
+CMake build at the root project, and package `libSDL3.so` and `libmain.so`.
+Use the Android NDK and a host `glslangValidator`/Python. Android 10+, ARM64 and
+Vulkan 1.1 are the intended initial target. Device testing, surface recreation
+across the full Android lifecycle, and touch controls for the keyboard-only
+menu actions still need work.

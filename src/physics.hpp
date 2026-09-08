@@ -13,11 +13,9 @@ struct Color {
 enum class Shape { Circle, Triangle, Rectangle };
 struct BodyView {
     int id;
-    bool soft;
     Color color;
     Vec2 center;
     std::vector<Vec2> outline;
-    // Consecutive groups of three vertices are the body's rendered surface.
     std::vector<Vec2> triangles;
 };
 struct Impact {
@@ -27,8 +25,7 @@ struct Impact {
     int a, b;
 };
 struct PhysicsStats {
-    int rigidContacts = 0, softRigidContacts = 0, softSoftContacts = 0;
-    int softRecoveries = 0;
+    int rigidContacts = 0;
 };
 
 // No SDL or Vulkan here. World units and input are independent of screen size.
@@ -40,7 +37,7 @@ class Physics {
     Physics(const Physics &) = delete;
     Physics &operator=(const Physics &) = delete;
     void reset(bool populate = true);
-    int spawn(Shape shape, bool soft, Vec2 position, Vec2 velocity = {});
+    int spawn(Shape shape, Vec2 position, Vec2 velocity = {});
     void step();
     bool beginDrag(Vec2 point);
     void moveDrag(Vec2 point);

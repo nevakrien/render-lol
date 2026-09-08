@@ -200,24 +200,8 @@ class BodyPass final : public DrawPass {
             Color edge{b.color.r * .6f, b.color.g * .6f, b.color.b * .6f, 1};
             for (size_t i = 0; i < b.outline.size(); ++i)
                 mesh.line(b.outline[i], b.outline[(i + 1) % b.outline.size()], .028f, edge);
-            if (frame.wireframe && b.soft)
-                for (size_t i = 0; i + 2 < b.triangles.size(); i += 3) {
-                    Color wire{.04f, .06f, .08f, .5f};
-                    mesh.line(b.triangles[i], b.triangles[i + 1], .015f, wire);
-                    mesh.line(b.triangles[i + 1], b.triangles[i + 2], .015f, wire);
-                    mesh.line(b.triangles[i + 2], b.triangles[i], .015f, wire);
-                }
-            // Hollow marker = soft, filled marker = rigid. Shapes stay flat colored.
-            if (b.soft) {
-                for (int i = 0; i < 16; ++i) {
-                    float a = i * 6.2831853f / 16, beta = (i + 1) * 6.2831853f / 16;
-                    mesh.line(
-                        {b.center.x + .075f * std::cos(a), b.center.y + .075f * std::sin(a)},
-                        {b.center.x + .075f * std::cos(beta), b.center.y + .075f * std::sin(beta)},
-                        .025f, edge);
-                }
-            } else
-                mesh.rect(b.center.x - .045f, b.center.y - .045f, .09f, .09f, edge);
+            // Filled marker for each rigid body. Shapes stay flat colored.
+            mesh.rect(b.center.x - .045f, b.center.y - .045f, .09f, .09f, edge);
         }
         mesh.upload();
     }
@@ -298,11 +282,11 @@ class HudPass final : public DrawPass {
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
         text("RENDER LOL", -8, 5.14f, .047f, {.85f, .91f, 1});
-        text("RIGID + SOFT", -4.9f, 5.07f, .024f, {.45f, .56f, .68f});
+        text("BOX2D", -2.5f, 5.07f, .024f, {.45f, .56f, .68f});
         text("SCORE " + std::to_string(frame.score), 4.6f, 5.1f, .035f, {.85f, .91f, 1});
         text("DRAG TO THROW / SPACE PAUSE / G GRAVITY / R RESET", -8, -4.84f, .026f,
              {.61f, .69f, .78f});
-        text("1 CIRCLE  2 TRIANGLE  3 RECTANGLE / S SOFT SPAWN / W MESH / M MUTE", -8, -5.17f,
+        text("1 CIRCLE  2 TRIANGLE  3 RECTANGLE / W MESH / M MUTE", -8, -5.17f,
              .023f, {.41f, .5f, .62f});
         mesh.upload();
     }

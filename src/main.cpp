@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
         toy::Physics physics;
         toy::Audio audio;
         toy::RenderFrame frame;
-        bool running = true, paused = false, gravity = false, softSpawn = false, background = false;
+        bool running = true, paused = false, gravity = false, background = false;
         SDL_FingerID finger = 0;
         bool touchActive = false;
         toy::Vec2 pointer{};
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
         };
         auto title = [&]() {
             std::string text = "render-lol | " + std::string(paused ? "PAUSED" : "playing") +
-                               " | spawn: " + (softSpawn ? "SOFT" : "RIGID") + " | gravity " +
+                               " | gravity " +
                                (gravity ? "on" : "off") + " | audio " +
                                (audio.muted() ? "off" : "on");
             SDL_SetWindowTitle(window.get(), text.c_str());
@@ -144,9 +144,6 @@ int main(int argc, char **argv) {
                         gravity = false;
                         frame.ripples.clear();
                         break;
-                    case SDLK_S:
-                        softSpawn = !softSpawn;
-                        break;
                     case SDLK_W:
                         frame.wireframe = !frame.wireframe;
                         break;
@@ -172,7 +169,7 @@ int main(int argc, char **argv) {
                                     free = false;
                             }
                             if (free) {
-                                physics.spawn(shape, softSpawn, p, {1.2f, -.8f});
+                                physics.spawn(shape, p, {1.2f, -.8f});
                                 spawnNumber = cell + 1;
                                 spawned = true;
                             }

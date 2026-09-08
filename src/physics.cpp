@@ -1,36 +1,18 @@
 #include "physics.hpp"
-#include <qmesh.h>
-#include <qrigidbody.h>
-#include <qsoftbody.h>
-#include <qworld.h>
+#include <box2d/box2d.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <set>
-#include <unordered_map>
+#include <vector>
 
 namespace toy {
 namespace {
 constexpr float pi = 3.14159265359f;
-constexpr float scale = 64.f;
-
-QVector q(Vec2 v) { return {v.x * scale, v.y * scale}; }
-Vec2 v(QVector p) { return {p.x / scale, p.y / scale}; }
 
 const Color palette[] = {{.27f, .72f, 1},    {1, .43f, .32f}, {1, .78f, .25f},
                          {.45f, .88f, .57f}, {.73f, .52f, 1}, {1, .49f, .73f}};
-
-QMesh *makeMesh(Shape shape, bool soft) {
-    if (shape == Shape::Rectangle)
-        return QMesh::CreateWithRect({1.7f * scale, 1.3f * scale}, QVector::Zero(),
-                                     soft ? QVector(4, 3) : QVector::Zero(), soft, true, 1.f);
-    int sides = shape == Shape::Circle ? 24 : 3;
-    float radius = (shape == Shape::Circle ? .8f : 1.f) * scale;
-    return QMesh::CreateWithPolygon(radius, sides, QVector::Zero(), soft ? 2 : -1, soft, true,
-                                    1.f);
-}
-
-float cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
 
 bool contains(const std::vector<Vec2> &polygon, Vec2 point) {
     bool inside = false;
@@ -42,113 +24,176 @@ bool contains(const std::vector<Vec2> &polygon, Vec2 point) {
     }
     return inside;
 }
+
+struct Object {
+    int id = 0;
+    Shape shape = Shape::Circle;
+    Color color{};
+    b2BodyId bodyId = b2_nullBodyId;
+    b2ShapeId shapeId = b2_nullShapeId;
+};
 } // namespace
 
 struct Physics::Impl {
-    struct Object {
-        int id = 0;
-        bool soft = false;
-        Color color{};
-        QBody *body = nullptr;
-        QMesh *mesh = nullptr;
-    };
-    struct Contact {
-        Vec2 point{};
-        Vec2 normal{};
-        float strength = 0;
-    };
-
-    QWorld world;
-    std::vector<std::unique_ptr<Object>> objects;
-    std::vector<std::unique_ptr<Object>> walls;
-    std::unordered_map<QBody *, Object *> owners;
-    std::map<std::pair<int, int>, Contact> contacts;
-    std::set<std::pair<int, int>> previousContacts;
+    b2WorldId world = b2_nullWorldId;
+    std::vector<Object> objects;
+    std::vector<Object> walls;
+    std::map<int, int> bodyToObject; // bodyId.index1 -> object id
     std::map<std::pair<int, int>, float> lastImpact;
     std::vector<Impact> impacts;
     PhysicsStats counters;
     int nextId = 1;
-    int dragId = 0;
-    int dragParticle = 0;
+    int dragObjectId = 0;
     Vec2 target{};
     Vec2 localGrab{};
     float time = 0;
     uint64_t points = 0;
     bool gravity = false;
 
-    Impl() { world.SetSleepingEnabled(false)->SetIterationCount(8); }
+    Impl() {
+        b2WorldDef def = b2DefaultWorldDef();
+        def.enableSleep = false;
+        def.hitEventThreshold = 2.0f;
+        world = b2CreateWorld(&def);
+    }
 
-    Object *find(int id) const {
-        for (auto &object : objects)
-            if (object->id == id)
-                return object.get();
+    Object *find(int id) {
+        for (auto &obj : objects)
+            if (obj.id == id)
+                return &obj;
         return nullptr;
     }
 
-    std::vector<Vec2> outline(const Object &object) const {
+    int idFromBody(b2BodyId bodyId) const {
+        auto it = bodyToObject.find(bodyId.index1);
+        return it != bodyToObject.end() ? it->second : -1;
+    }
+
+    int idFromShape(b2ShapeId shapeId) const {
+        b2BodyId bid = b2Shape_GetBody(shapeId);
+        auto it = bodyToObject.find(bid.index1);
+        if (it != bodyToObject.end())
+            return it->second;
+        for (auto &wall : walls)
+            if (wall.bodyId.index1 == bid.index1)
+                return wall.id;
+        return -1;
+    }
+
+    Vec2 bodyPosition(b2BodyId id) const {
+        b2Vec2 p = b2Body_GetPosition(id);
+        return {p.x, p.y};
+    }
+
+    float bodyRotation(b2BodyId id) const {
+        b2Rot r = b2Body_GetRotation(id);
+        return atan2f(r.s, r.c);
+    }
+
+    std::vector<Vec2> circleOutline(b2Vec2 center, float radius, int segments = 24) const {
         std::vector<Vec2> result;
-        result.reserve(object.mesh->GetPolygonParticleCount());
-        for (int i = 0; i < object.mesh->GetPolygonParticleCount(); ++i)
-            result.push_back(v(object.mesh->GetParticleFromPolygon(i)->GetGlobalPosition()));
+        result.reserve(segments);
+        for (int i = 0; i < segments; ++i) {
+            float a = float(i) / segments * 2.0f * pi;
+            result.push_back({center.x + radius * cosf(a), center.y + radius * sinf(a)});
+        }
         return result;
     }
 
-    Vec2 velocity(const Object &object) const {
-        QVector result = QVector::Zero();
-        if (object.soft) {
-            int count = object.mesh->GetParticleCount();
-            for (int i = 0; i < count; ++i) {
-                auto *particle = object.mesh->GetParticleAt(i);
-                result += particle->GetGlobalPosition() - particle->GetPreviousGlobalPosition();
+    std::vector<Vec2> polygonOutline(b2BodyId bodyId, Shape shape) const {
+        b2Vec2 center = b2Body_GetPosition(bodyId);
+        float angle = b2Rot_GetAngle(b2Body_GetRotation(bodyId));
+        float ca = cosf(angle), sa = sinf(angle);
+
+        auto rotate = [&](float lx, float ly) -> Vec2 {
+            return {center.x + ca * lx - sa * ly, center.y + sa * lx + ca * ly};
+        };
+
+        if (shape == Shape::Circle) {
+            b2ShapeId sid = b2_nullShapeId;
+            int count = b2Body_GetShapes(bodyId, &sid, 1);
+            if (count > 0) {
+                b2Circle circle = b2Shape_GetCircle(sid);
+                return circleOutline(center, circle.radius);
             }
-            if (count)
-                result /= float(count);
+            return circleOutline(center, 0.8f);
+        } else if (shape == Shape::Rectangle) {
+            b2ShapeId sid = b2_nullShapeId;
+            int count = b2Body_GetShapes(bodyId, &sid, 1);
+            if (count > 0) {
+                b2Polygon poly = b2Shape_GetPolygon(sid);
+                std::vector<Vec2> result;
+                for (int i = 0; i < poly.count; ++i)
+                    result.push_back(rotate(poly.vertices[i].x, poly.vertices[i].y));
+                return result;
+            }
+            float hx = 0.85f, hy = 0.65f;
+            return {rotate(-hx, -hy), rotate(hx, -hy), rotate(hx, hy), rotate(-hx, hy)};
         } else {
-            result = object.body->GetPosition() - object.body->GetPreviousPosition();
+            float r = 1.0f;
+            std::vector<Vec2> result;
+            for (int i = 0; i < 3; ++i) {
+                float a = angle + float(i) * 2.0f * pi / 3.0f;
+                result.push_back({center.x + r * cosf(a), center.y + r * sinf(a)});
+            }
+            return result;
         }
-        return {result.x / (scale * stepSize), result.y / (scale * stepSize)};
     }
 
-    void listen(Object &object) {
-        object.body->CollisionEventListener = [this](QBody *body, QBody::CollisionInfo info) {
-            auto owner = owners.find(body);
-            auto other = owners.find(info.body);
-            if (owner == owners.end() || other == owners.end() || owner->second->id == other->second->id)
-                return true;
-
-            auto key = std::minmax(owner->second->id, other->second->id);
-            Vec2 a = velocity(*owner->second);
-            Vec2 b = velocity(*other->second);
-            Vec2 normal = v(info.normal * scale);
-            float strength = std::abs((a.x - b.x) * normal.x + (a.y - b.y) * normal.y);
-            auto existing = contacts.find(key);
-            if (existing == contacts.end() || strength > existing->second.strength)
-                contacts[key] = {v(info.position), normal, strength};
-            return true;
-        };
+    std::vector<Vec2> triangleMesh(b2BodyId bodyId, Shape shape) const {
+        auto outline = polygonOutline(bodyId, shape);
+        std::vector<Vec2> triangles;
+        if (outline.size() >= 3) {
+            Vec2 center{};
+            for (auto &p : outline) {
+                center.x += p.x;
+                center.y += p.y;
+            }
+            center.x /= outline.size();
+            center.y /= outline.size();
+            for (size_t i = 0; i < outline.size(); ++i) {
+                size_t j = (i + 1) % outline.size();
+                triangles.push_back(center);
+                triangles.push_back(outline[i]);
+                triangles.push_back(outline[j]);
+            }
+        }
+        return triangles;
     }
 
     void addWall(Vec2 position, Vec2 size, int id) {
-        auto object = std::make_unique<Object>();
-        object->id = id;
-        object->body = new QRigidBody();
-        object->mesh = QMesh::CreateWithRect(q(size));
-        object->body->AddMesh(object->mesh)->SetPosition(q(position));
-        object->body->SetMode(QBody::STATIC)->SetRestitution(.85f)->SetFriction(.2f);
-        owners[object->body] = object.get();
-        listen(*object);
-        world.AddBody(object->body);
-        walls.push_back(std::move(object));
+        b2BodyDef bodyDef = b2DefaultBodyDef();
+        bodyDef.type = b2_staticBody;
+        bodyDef.position = {position.x, position.y};
+        b2BodyId bid = b2CreateBody(world, &bodyDef);
+
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.friction = 0.2f;
+        shapeDef.restitution = 0.85f;
+        shapeDef.enableHitEvents = true;
+        b2Polygon box = b2MakeBox(size.x * 0.5f, size.y * 0.5f);
+        b2ShapeId sid = b2CreatePolygonShape(bid, &shapeDef, &box);
+
+        Object obj;
+        obj.id = id;
+        obj.shape = Shape::Rectangle;
+        obj.color = palette[0];
+        obj.bodyId = bid;
+        obj.shapeId = sid;
+        walls.push_back(obj);
     }
 
     void clear() {
-        dragId = 0;
-        world.ClearWorld();
+        dragObjectId = 0;
+        if (b2World_IsValid(world))
+            b2DestroyWorld(world);
+        b2WorldDef def = b2DefaultWorldDef();
+        def.enableSleep = false;
+        def.hitEventThreshold = 2.0f;
+        world = b2CreateWorld(&def);
         objects.clear();
         walls.clear();
-        owners.clear();
-        contacts.clear();
-        previousContacts.clear();
+        bodyToObject.clear();
         lastImpact.clear();
         impacts.clear();
         counters = {};
@@ -169,96 +214,83 @@ void Physics::reset(bool populate) {
     impl->addWall({0, -5}, {16, 1}, -3);
     impl->addWall({0, 5}, {16, 1}, -4);
     if (populate) {
-        spawn(Shape::Circle, false, {-5, 2}, {2, -1});
-        spawn(Shape::Triangle, true, {-1.8f, 2}, {1.5f, -1.2f});
-        spawn(Shape::Rectangle, false, {2, 2}, {-1, -1.8f});
-        spawn(Shape::Circle, true, {5, -1.6f}, {-2, 1.2f});
-        spawn(Shape::Triangle, false, {-4, -2}, {1.7f, 1});
-        spawn(Shape::Rectangle, true, {.3f, -1.8f}, {-1.5f, 1.6f});
+        spawn(Shape::Circle, {-5, 2}, {2, -1});
+        spawn(Shape::Triangle, {-1.8f, 2}, {1.5f, -1.2f});
+        spawn(Shape::Rectangle, {2, 2}, {-1, -1.8f});
+        spawn(Shape::Circle, {5, -1.6f}, {-2, 1.2f});
+        spawn(Shape::Triangle, {-4, -2}, {1.7f, 1});
+        spawn(Shape::Rectangle, {.3f, -1.8f}, {-1.5f, 1.6f});
     }
 }
 
-int Physics::spawn(Shape shape, bool soft, Vec2 position, Vec2 velocity) {
+int Physics::spawn(Shape shape, Vec2 position, Vec2 velocity) {
     if (impl->objects.size() >= 24)
         return 0;
 
-    auto object = std::make_unique<Impl::Object>();
-    object->id = impl->nextId++;
-    object->soft = soft;
-    object->color = palette[(object->id - 1) % 6];
-    object->mesh = makeMesh(shape, soft);
-    if (soft) {
-        auto *body = new QSoftBody();
-        body
-               ->SetRigidity(.72f)
-            ->SetAreaPreservingEnabled(true)
-            ->SetAreaPreservingRate(.8f)
-        //     ->SetAreaPreservingRigidity(.8f)
-            // ->SetShapeMatchingEnabled(true)
-        //     ->SetShapeMatchingRate(.12f)
-        //     ->SetParticleSpesificMassEnabled(true)
-        //     ->SetParticleSpesificMass(.08f)
-            ;
-        object->body = body;
-    } else {
-        object->body = new QRigidBody();
-    }
-    object->body->AddMesh(object->mesh)
-        ->SetPosition(q(position))
-        ->SetMass(1.5f)
-        ->SetRestitution(.85f)
-        ->SetFriction(.2f)
-        ->SetAirFriction(.002f)
-        ->SetVelocityLimit(15.f * scale * stepSize);
+    b2BodyDef bodyDef = b2DefaultBodyDef();
+    bodyDef.type = b2_dynamicBody;
+    bodyDef.position = {position.x, position.y};
+    bodyDef.linearDamping = 0.0f;
+    bodyDef.angularDamping = 0.2f;
+    bodyDef.gravityScale = 1.0f;
+    bodyDef.enableSleep = false;
+    bodyDef.isAwake = true;
+    bodyDef.linearVelocity = {velocity.x, velocity.y};
 
-    QVector perStepVelocity = q(velocity) * stepSize;
-    if (soft) {
-        for (int i = 0; i < object->mesh->GetParticleCount(); ++i) {
-            auto *particle = object->mesh->GetParticleAt(i);
-            particle->SetPreviousGlobalPosition(particle->GetGlobalPosition() - perStepVelocity);
+    Object obj;
+    obj.id = impl->nextId++;
+    obj.shape = shape;
+    obj.color = palette[(obj.id - 1) % 6];
+
+    obj.bodyId = b2CreateBody(impl->world, &bodyDef);
+
+    b2ShapeDef shapeDef = b2DefaultShapeDef();
+    shapeDef.friction = 0.2f;
+    shapeDef.restitution = 0.85f;
+    shapeDef.density = 1.0f;
+    shapeDef.enableHitEvents = true;
+
+    if (shape == Shape::Circle) {
+        b2Circle circle = {{0, 0}, 0.8f};
+        obj.shapeId = b2CreateCircleShape(obj.bodyId, &shapeDef, &circle);
+    } else if (shape == Shape::Rectangle) {
+        b2Polygon rect = b2MakeBox(0.85f, 0.65f);
+        obj.shapeId = b2CreatePolygonShape(obj.bodyId, &shapeDef, &rect);
+    } else {
+        float r = 1.0f;
+        b2Vec2 verts[3];
+        for (int i = 0; i < 3; ++i) {
+            float a = float(i) * 2.0f * pi / 3.0f;
+            verts[i] = {r * cosf(a), r * sinf(a)};
         }
-    } else {
-        object->body->SetPreviousPosition(object->body->GetPosition() - perStepVelocity);
+        b2Hull hull = b2ComputeHull(verts, 3);
+        b2Polygon poly = b2MakePolygon(&hull, 0.0f);
+        obj.shapeId = b2CreatePolygonShape(obj.bodyId, &shapeDef, &poly);
     }
 
-    int id = object->id;
-    impl->owners[object->body] = object.get();
-    impl->listen(*object);
-    impl->world.AddBody(object->body);
-    impl->objects.push_back(std::move(object));
+    int id = obj.id;
+    impl->objects.push_back(obj);
+    impl->bodyToObject[impl->objects.back().bodyId.index1] = id;
     return id;
 }
 
 void Physics::setGravity(bool enabled) {
     impl->gravity = enabled;
-    impl->world.SetGravity({0, enabled ? -4.f * scale * stepSize * stepSize : 0});
+    b2World_SetGravity(impl->world, {0, enabled ? -9.8f : 0});
 }
 
 bool Physics::beginDrag(Vec2 point) {
     endDrag();
     for (auto it = impl->objects.rbegin(); it != impl->objects.rend(); ++it) {
-        auto &object = **it;
-        if (!contains(impl->outline(object), point))
+        auto outline = impl->polygonOutline(it->bodyId, it->shape);
+        if (!contains(outline, point))
             continue;
-        impl->dragId = object.id;
-        moveDrag(point);
-        // if (object.soft) {
-        //     float best = 1e9f;
-        //     for (int i = 0; i < object.mesh->GetParticleCount(); ++i) {
-        //         Vec2 p = v(object.mesh->GetParticleAt(i)->GetGlobalPosition());
-        //         float dx = p.x - point.x, dy = p.y - point.y;
-        //         if (dx * dx + dy * dy < best) {
-        //             best = dx * dx + dy * dy;
-        //             impl->dragParticle = i;
-        //         }
-        //     }
-        // } else {
-            Vec2 center = v(object.body->GetPosition());
-            float angle = -object.body->GetRotation();
-            Vec2 offset{point.x - center.x, point.y - center.y};
-            impl->localGrab = {offset.x * std::cos(angle) - offset.y * std::sin(angle),
-                               offset.x * std::sin(angle) + offset.y * std::cos(angle)};
-        // }
+        impl->dragObjectId = it->id;
+        Vec2 center = impl->bodyPosition(it->bodyId);
+        float angle = impl->bodyRotation(it->bodyId);
+        Vec2 offset{point.x - center.x, point.y - center.y};
+        impl->localGrab = {offset.x * cosf(angle) + offset.y * sinf(angle),
+                           -offset.x * sinf(angle) + offset.y * cosf(angle)};
         return true;
     }
     return false;
@@ -268,86 +300,72 @@ void Physics::moveDrag(Vec2 point) {
     impl->target = {std::clamp(point.x, -7.8f, 7.8f), std::clamp(point.y, -4.3f, 4.3f)};
 }
 
-void Physics::endDrag() { impl->dragId = 0; }
-bool Physics::dragging() const { return impl->dragId != 0; }
+void Physics::endDrag() { impl->dragObjectId = 0; }
+bool Physics::dragging() const { return impl->dragObjectId != 0; }
 
 void Physics::step() {
     auto &state = *impl;
     state.time += stepSize;
-    state.contacts.clear();
 
-    if (auto *object = state.find(state.dragId)) {
-        if (object->soft) {
-            auto *particle = object->mesh->GetParticleAt(state.dragParticle);
-            QVector delta = q(state.target) - particle->GetGlobalPosition();
-            QVector velocity = particle->GetGlobalPosition() - particle->GetPreviousGlobalPosition();
-            particle->ApplyForce(delta * .12f - velocity * .3f);
-        } else {
-            float angle = object->body->GetRotation();
-            Vec2 arm{state.localGrab.x * std::cos(angle) - state.localGrab.y * std::sin(angle),
-                     state.localGrab.x * std::sin(angle) + state.localGrab.y * std::cos(angle)};
-            QVector grab = object->body->GetPosition() + q(arm);
-            QVector delta = q(state.target) - grab;
-            QVector velocity = object->body->GetPosition() - object->body->GetPreviousPosition();
-            static_cast<QRigidBody *>(object->body)->ApplyForce(delta * .08f - velocity * .25f,
-                                                               q(arm));
-        }
+    if (auto *object = state.find(state.dragObjectId)) {
+        float angle = state.bodyRotation(object->bodyId);
+        Vec2 arm{state.localGrab.x * cosf(angle) - state.localGrab.y * sinf(angle),
+                 state.localGrab.x * sinf(angle) + state.localGrab.y * cosf(angle)};
+        b2Vec2 bodyPos = b2Body_GetPosition(object->bodyId);
+        b2Vec2 grab = {bodyPos.x + arm.x, bodyPos.y + arm.y};
+        b2Vec2 tgt = {state.target.x, state.target.y};
+        b2Vec2 delta = {tgt.x - grab.x, tgt.y - grab.y};
+        b2Vec2 vel = b2Body_GetLinearVelocity(object->bodyId);
+        b2Vec2 force = {delta.x * 50.0f - vel.x * 15.0f, delta.y * 50.0f - vel.y * 15.0f};
+        b2Body_ApplyForce(object->bodyId, force, b2Body_GetWorldCenterOfMass(object->bodyId),
+                          true);
     }
 
-    state.world.Update();
+    b2World_Step(state.world, stepSize, 4);
 
-    std::set<std::pair<int, int>> now;
-    for (auto &[key, contact] : state.contacts) {
-        now.insert(key);
-        auto *a = state.find(key.first);
-        auto *b = state.find(key.second);
-        bool softA = a && a->soft;
-        bool softB = b && b->soft;
-        if (softA && softB)
-            ++state.counters.softSoftContacts;
-        else if (softA || softB)
-            ++state.counters.softRigidContacts;
-        else
-            ++state.counters.rigidContacts;
+    b2ContactEvents events = b2World_GetContactEvents(state.world);
+    for (int i = 0; i < events.hitCount; ++i) {
+        auto &hit = events.hitEvents[i];
+        int idA = state.idFromShape(hit.shapeIdA);
+        int idB = state.idFromShape(hit.shapeIdB);
 
-        if (contact.strength > .65f && !state.previousContacts.count(key) &&
+        if (idA < 0 && idB < 0)
+            continue;
+        if (idA == idB)
+            continue;
+
+        auto key = std::minmax(idA, idB);
+        float strength = hit.approachSpeed / 8.0f;
+        strength = std::clamp(strength, 0.0f, 1.0f);
+
+        if (strength > .65f &&
             (!state.lastImpact.count(key) || state.time - state.lastImpact[key] > .12f)) {
-            auto *owner = a ? a : b;
+            const Object *owner = nullptr;
+            for (auto &obj : state.objects)
+                if (obj.id == key.first || obj.id == key.second) {
+                    owner = &obj;
+                    break;
+                }
             state.impacts.push_back(
-                {contact.point, owner ? owner->color : palette[0], contact.strength, key.first,
-                 key.second});
-            state.points += uint64_t(contact.strength * 10);
+                {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
+                 key.first, key.second});
+            state.points += uint64_t(strength * 10);
             state.lastImpact[key] = state.time;
         }
+        ++state.counters.rigidContacts;
     }
-    state.previousContacts = std::move(now);
 }
 
 std::vector<BodyView> Physics::snapshot() const {
     std::vector<BodyView> result;
     result.reserve(impl->objects.size());
-    for (auto &object : impl->objects) {
-        auto outline = impl->outline(*object);
-        std::vector<Vec2> triangles;
-        for (int i = 0; i < object->mesh->GetUVMapCount(); ++i) {
-            auto face = object->mesh->GetUVMapAt(i);
-            for (size_t j = 1; j + 1 < face.size(); ++j) {
-                triangles.push_back(v(object->mesh->GetParticleAt(face[0])->GetGlobalPosition()));
-                triangles.push_back(v(object->mesh->GetParticleAt(face[j])->GetGlobalPosition()));
-                triangles.push_back(v(object->mesh->GetParticleAt(face[j + 1])->GetGlobalPosition()));
-            }
-        }
-        Vec2 center{};
-        for (auto point : outline) {
-            center.x += point.x;
-            center.y += point.y;
-        }
-        if (!outline.empty()) {
-            center.x /= outline.size();
-            center.y /= outline.size();
-        }
-        result.push_back({object->id, object->soft, object->color, center, std::move(outline),
-                          std::move(triangles)});
+    for (auto &obj : impl->objects) {
+        if (!b2Body_IsValid(obj.bodyId))
+            continue;
+        auto outline = impl->polygonOutline(obj.bodyId, obj.shape);
+        auto triangles = impl->triangleMesh(obj.bodyId, obj.shape);
+        Vec2 center = impl->bodyPosition(obj.bodyId);
+        result.push_back({obj.id, obj.color, center, std::move(outline), std::move(triangles)});
     }
     return result;
 }
@@ -362,11 +380,14 @@ PhysicsStats Physics::stats() const { return impl->counters; }
 uint64_t Physics::score() const { return impl->points; }
 
 bool Physics::healthy() const {
-    for (auto &object : impl->objects)
-        for (auto point : impl->outline(*object))
-            if (!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x) > 8.5f ||
-                std::abs(point.y) > 5.f)
-                return false;
+    for (auto &obj : impl->objects) {
+        if (!b2Body_IsValid(obj.bodyId))
+            return false;
+        Vec2 pos = impl->bodyPosition(obj.bodyId);
+        if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || std::abs(pos.x) > 8.5f ||
+            std::abs(pos.y) > 5.f)
+            return false;
+    }
     return true;
 }
 } // namespace toy

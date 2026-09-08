@@ -18,11 +18,41 @@ int main() try {
     require(toy::tuning::heatPower(toy::tuning::heatBurnout) == 0,
             "impact power did not reach zero at burnout");
 
+    {
+        toy::Physics drags;
+        drags.reset(false);
+        drags.spawn(toy::Shape::Circle, {-3, 0});
+        drags.spawn(toy::Shape::Circle, {3, 0});
+        auto left = drags.beginDrag({-3, 0});
+        auto right = drags.beginDrag({3, 0});
+        require(left && right && left != right, "could not start two independent drags");
+        require(!drags.beginDrag({0, 3}), "a missed grab unexpectedly created a drag");
+        drags.moveDrag(left, {-3, 2});
+        drags.moveDrag(right, {3, -2});
+        for (int i = 0; i < 30; ++i)
+            drags.step();
+        auto bodies = drags.snapshot();
+        require(bodies[0].center.y > .5f && bodies[1].center.y < -.5f,
+                "separate drags did not move independently");
+        drags.endAllDrags();
+        require(!drags.dragging(), "endAllDrags did not clear active drags");
+
+        auto first = drags.beginDrag(bodies[0].center);
+        auto second = drags.beginDrag(bodies[0].center);
+        require(first && second, "could not attach two drags to one shape");
+        drags.endDrag(first);
+        require(drags.dragging(), "ending one drag released another drag on the same shape");
+        drags.moveDrag(second, {0, 3});
+        drags.endDrag(second);
+        require(!drags.dragging(), "same-shape drags did not end independently");
+    }
+
     toy::Physics physics;
     physics.reset(false);
     physics.spawn(toy::Shape::Circle, {0, -3.4f});
-    require(physics.beginDrag({0, -3.4f}), "could not grab test shape");
-    physics.moveDrag({0, -4.3f});
+    auto drag = physics.beginDrag({0, -3.4f});
+    require(drag, "could not grab test shape");
+    physics.moveDrag(drag, {0, -4.3f});
 
     int impacts = 0;
     bool wasOverheated = false;
@@ -52,7 +82,7 @@ int main() try {
             "a single repeated pair reached complete burnout");
     require(transitionHadImpact, "the collision crossing into overheat was suppressed");
 
-    physics.endDrag();
+    physics.endDrag(drag);
     float hotLevel = hot.heat;
     for (int i = 0; i < 600; ++i) {
         physics.step();

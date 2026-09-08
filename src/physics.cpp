@@ -47,6 +47,11 @@ struct PairState {
 } // namespace
 
 struct Physics::Impl {
+    struct Drag {
+        int objectId;
+        Vec2 target;
+    };
+
     b2WorldId world = b2_nullWorldId;
     std::vector<Object> objects;
     std::vector<Object> walls;
@@ -55,8 +60,8 @@ struct Physics::Impl {
     std::vector<Impact> impacts;
     PhysicsStats counters;
     int nextId = 1;
-    int dragObjectId = 0;
-    Vec2 target{};
+    std::map<DragId, Drag> drags;
+    DragId nextDragId = 1;
     float time = 0;
     uint64_t points = 0;
     bool gravity = false;
@@ -199,7 +204,8 @@ struct Physics::Impl {
     }
 
     void clear() {
-        dragObjectId = 0;
+        drags.clear();
+        nextDragId = 1;
         if (b2World_IsValid(world))
             b2DestroyWorld(world);
         b2WorldDef def = b2DefaultWorldDef();
@@ -294,30 +300,56 @@ void Physics::setGravity(bool enabled) {
     b2World_SetGravity(impl->world, {0, enabled ? -9.8f : 0});
 }
 
-bool Physics::beginDrag(Vec2 point) {
-    endDrag();
+Physics::DragId Physics::beginDrag(Vec2 point) {
     for (auto it = impl->objects.rbegin(); it != impl->objects.rend(); ++it) {
         auto outline = impl->polygonOutline(it->bodyId, it->shape);
         if (!contains(outline, point))
             continue;
-        impl->dragObjectId = it->id;
-        impl->target = point;
+        DragId drag = impl->nextDragId++;
+        if (drag == 0)
+            drag = impl->nextDragId++;
+        impl->drags.emplace(drag, Impl::Drag{it->id, point});
         b2Body_SetLinearDamping(it->bodyId, 100.0f);
-        return true;
+        return drag;
     }
-    return false;
+    return 0;
 }
 
-void Physics::moveDrag(Vec2 point) {
-    impl->target = {std::clamp(point.x, -7.8f, 7.8f), std::clamp(point.y, -4.3f, 4.3f)};
+void Physics::moveDrag(DragId drag, Vec2 point) {
+    auto it = impl->drags.find(drag);
+    if (it != impl->drags.end())
+        it->second.target = {std::clamp(point.x, -7.8f, 7.8f),
+                             std::clamp(point.y, -4.3f, 4.3f)};
 }
 
-void Physics::endDrag() {
-    if (auto *object = impl->find(impl->dragObjectId))
-        b2Body_SetLinearDamping(object->bodyId, 0.0f);
-    impl->dragObjectId = 0;
+void Physics::endDrag(DragId drag) {
+    auto it = impl->drags.find(drag);
+    if (it == impl->drags.end())
+        return;
+    int objectId = it->second.objectId;
+    impl->drags.erase(it);
+    bool stillDragged = std::any_of(impl->drags.begin(), impl->drags.end(),
+                                    [objectId](const auto &entry) {
+                                        return entry.second.objectId == objectId;
+                                    });
+    if (!stillDragged)
+        if (auto *object = impl->find(objectId))
+            b2Body_SetLinearDamping(object->bodyId, 0.0f);
 }
-bool Physics::dragging() const { return impl->dragObjectId != 0; }
+
+void Physics::endAllDrags() {
+    std::set<int> objectIds;
+    for (const auto &[drag, state] : impl->drags) {
+        (void)drag;
+        objectIds.insert(state.objectId);
+    }
+    for (int objectId : objectIds)
+        if (auto *object = impl->find(objectId))
+            b2Body_SetLinearDamping(object->bodyId, 0.0f);
+    impl->drags.clear();
+}
+
+bool Physics::dragging() const { return !impl->drags.empty(); }
 
 void Physics::step() {
     auto &state = *impl;
@@ -326,9 +358,13 @@ void Physics::step() {
     for (auto &object : state.objects)
         object.collisionLoad = 0;
 
-    if (auto *object = state.find(state.dragObjectId)) {
+    for (const auto &[drag, dragState] : state.drags) {
+        (void)drag;
+        auto *object = state.find(dragState.objectId);
+        if (!object)
+            continue;
         b2Vec2 bodyPos = b2Body_GetPosition(object->bodyId);
-        b2Vec2 delta = {state.target.x - bodyPos.x, state.target.y - bodyPos.y};
+        b2Vec2 delta = {dragState.target.x - bodyPos.x, dragState.target.y - bodyPos.y};
         float scale = stepSize * 700.0f * (b2Body_GetMass(object->bodyId) + 0.7f);
         b2Body_ApplyLinearImpulseToCenter(object->bodyId, {delta.x * scale, delta.y * scale}, true);
     }

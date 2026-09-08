@@ -38,6 +38,7 @@ struct PhysicsStats {
 // No SDL or Vulkan here. World units and input are independent of screen size.
 class Physics {
   public:
+    using DragId = uint64_t;
     static constexpr float halfWidth = 8, halfHeight = 4.5f, stepSize = 1.f / 120;
     Physics();
     ~Physics();
@@ -46,9 +47,10 @@ class Physics {
     void reset(bool populate = true);
     int spawn(Shape shape, Vec2 position, Vec2 velocity = {});
     void step();
-    bool beginDrag(Vec2 point);
-    void moveDrag(Vec2 point);
-    void endDrag();
+    DragId beginDrag(Vec2 point);
+    void moveDrag(DragId drag, Vec2 point);
+    void endDrag(DragId drag);
+    void endAllDrags();
     bool dragging() const;
     void setGravity(bool enabled);
     std::vector<BodyView> snapshot() const;

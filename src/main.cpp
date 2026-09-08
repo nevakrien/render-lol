@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -125,6 +126,8 @@ int main(int argc, char **argv) {
 #ifdef __ANDROID__
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "Landscape");
 #endif
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL: %s", SDL_GetError());
         return 1;
@@ -178,9 +181,10 @@ int main(int argc, char **argv) {
         bool running = true, paused = false, gravity = false, background = false;
         int menuScreen = 0; // 0: game, 1: pause, 2: settings
         int explosionSize = settings.explosionSize;
-        SDL_FingerID finger = 0;
-        bool touchActive = false;
-        toy::Vec2 pointer{};
+        using TouchKey = std::pair<SDL_TouchID, SDL_FingerID>;
+        std::map<TouchKey, toy::Physics::DragId> touchDrags;
+        toy::Physics::DragId mouseDrag = 0;
+        toy::Physics::DragId smokeDrag = 0;
         int frames = 0, spawnNumber = 0;
         double accumulator = 0;
         Uint64 last = SDL_GetPerformanceCounter();
@@ -202,13 +206,19 @@ int main(int argc, char **argv) {
         auto inside = [](toy::Vec2 p, float x, float y, float w, float h) {
             return p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h;
         };
+        auto cancelDrags = [&]() {
+            physics.endAllDrags();
+            touchDrags.clear();
+            mouseDrag = 0;
+            smokeDrag = 0;
+        };
         auto handleUi = [&](toy::Vec2 p) {
             bool settingsChanged = false;
             if (menuScreen == 0) {
                 if (!inside(p, -8.0f, 4.65f, 2.15f, .7f))
                     return false;
                 menuScreen = 1;
-                physics.endDrag();
+                cancelDrags();
             } else if (menuScreen == 1) {
                 if (inside(p, -2.5f, .65f, 5, .7f)) {
                     menuScreen = 0;
@@ -216,6 +226,7 @@ int main(int argc, char **argv) {
                 } else if (inside(p, -2.5f, -.25f, 5, .7f))
                     menuScreen = 2;
                 else if (inside(p, -2.5f, -1.15f, 5, .7f)) {
+                    cancelDrags();
                     physics.reset();
                     gravity = false;
                     paused = false;
@@ -265,55 +276,65 @@ int main(int argc, char **argv) {
                          e.type == SDL_EVENT_WINDOW_RESIZED)
                     renderer.resize();
                 else if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
-                    physics.endDrag();
-                    touchActive = false;
+                    cancelDrags();
                 } else if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
                     background = true;
-                    physics.endDrag();
-                    touchActive = false;
+                    cancelDrags();
                 } else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
                     background = false;
                     renderer.resize();
                 } else if (e.type == SDL_EVENT_MOUSE_MOTION &&
                            e.motion.which != SDL_TOUCH_MOUSEID) {
-                    pointer = map(e.motion.x, e.motion.y);
-                    if (!touchActive)
-                        physics.moveDrag(pointer);
+                    if (mouseDrag)
+                        physics.moveDrag(mouseDrag, map(e.motion.x, e.motion.y));
                 } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                             e.button.which != SDL_TOUCH_MOUSEID &&
-                            e.button.button == SDL_BUTTON_LEFT && !touchActive) {
-                    pointer = map(e.button.x, e.button.y);
+                            e.button.button == SDL_BUTTON_LEFT) {
+                    toy::Vec2 pointer = map(e.button.x, e.button.y);
                     if (!handleUi(pointer) && menuScreen == 0)
-                        physics.beginDrag(pointer);
+                        mouseDrag = physics.beginDrag(pointer);
                 } else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP &&
                            e.button.which != SDL_TOUCH_MOUSEID &&
-                           e.button.button == SDL_BUTTON_LEFT && !touchActive)
-                    physics.endDrag();
-                else if (e.type == SDL_EVENT_FINGER_DOWN && !touchActive) {
+                            e.button.button == SDL_BUTTON_LEFT) {
+                    physics.endDrag(mouseDrag);
+                    mouseDrag = 0;
+                } else if (e.type == SDL_EVENT_FINGER_DOWN &&
+                           e.tfinger.touchID != SDL_MOUSE_TOUCHID) {
                     int w, h;
                     SDL_GetWindowSize(window.get(), &w, &h);
-                    pointer = map(e.tfinger.x * w, e.tfinger.y * h);
+                    toy::Vec2 pointer = map(e.tfinger.x * w, e.tfinger.y * h);
                     if (handleUi(pointer))
                         continue;
                     if (menuScreen != 0)
                         continue;
-                    touchActive = true;
-                    finger = e.tfinger.fingerID;
-                    physics.beginDrag(pointer);
-                } else if (e.type == SDL_EVENT_FINGER_MOTION && touchActive &&
-                           e.tfinger.fingerID == finger) {
+                    auto drag = physics.beginDrag(pointer);
+                    if (drag) {
+                        TouchKey key{e.tfinger.touchID, e.tfinger.fingerID};
+                        auto previous = touchDrags.find(key);
+                        if (previous != touchDrags.end())
+                            physics.endDrag(previous->second);
+                        touchDrags[key] = drag;
+                    }
+                } else if (e.type == SDL_EVENT_FINGER_MOTION &&
+                           e.tfinger.touchID != SDL_MOUSE_TOUCHID) {
+                    auto it = touchDrags.find({e.tfinger.touchID, e.tfinger.fingerID});
+                    if (it == touchDrags.end())
+                        continue;
                     int w, h;
                     SDL_GetWindowSize(window.get(), &w, &h);
-                    pointer = map(e.tfinger.x * w, e.tfinger.y * h);
-                    physics.moveDrag(pointer);
-                } else if (e.type == SDL_EVENT_FINGER_UP && touchActive &&
-                           e.tfinger.fingerID == finger) {
-                    physics.endDrag();
-                    touchActive = false;
+                    physics.moveDrag(it->second, map(e.tfinger.x * w, e.tfinger.y * h));
+                } else if ((e.type == SDL_EVENT_FINGER_UP ||
+                            e.type == SDL_EVENT_FINGER_CANCELED) &&
+                           e.tfinger.touchID != SDL_MOUSE_TOUCHID) {
+                    auto it = touchDrags.find({e.tfinger.touchID, e.tfinger.fingerID});
+                    if (it != touchDrags.end()) {
+                        physics.endDrag(it->second);
+                        touchDrags.erase(it);
+                    }
                 } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                     if (e.key.key == SDLK_ESCAPE) {
                         menuScreen = menuScreen == 2 ? 1 : (menuScreen == 1 ? 0 : 1);
-                        physics.endDrag();
+                        cancelDrags();
                         title();
                         continue;
                     }
@@ -328,6 +349,7 @@ int main(int argc, char **argv) {
                         physics.setGravity(gravity);
                         break;
                     case SDLK_R:
+                        cancelDrags();
                         physics.reset();
                         gravity = false;
                         frame.ripples.clear();
@@ -386,22 +408,26 @@ int main(int argc, char **argv) {
                 dt = 1.0 / 60;
                 if (frames == 25) {
                     auto b = physics.snapshot().front();
-                    physics.beginDrag(b.center);
+                    smokeDrag = physics.beginDrag(b.center);
                 }
                 if (frames >= 25 && frames < 70)
-                    physics.moveDrag({-3.f + (frames - 25) * .04f, 2.5f});
-                if (frames == 70)
-                    physics.endDrag();
+                    physics.moveDrag(smokeDrag, {-3.f + (frames - 25) * .04f, 2.5f});
+                if (frames == 70) {
+                    physics.endDrag(smokeDrag);
+                    smokeDrag = 0;
+                }
                 if (frames == 90)
                     SDL_SetWindowSize(window.get(), 900, 700);
                 if (frames == 125) {
                     auto b = physics.snapshot()[1];
-                    physics.beginDrag(b.center);
+                    smokeDrag = physics.beginDrag(b.center);
                 }
                 if (frames >= 125 && frames < 165)
-                    physics.moveDrag({1.5f, 2.8f});
-                if (frames == 165)
-                    physics.endDrag();
+                    physics.moveDrag(smokeDrag, {1.5f, 2.8f});
+                if (frames == 165) {
+                    physics.endDrag(smokeDrag);
+                    smokeDrag = 0;
+                }
                 if (frames == 180)
                     SDL_SetWindowSize(window.get(), 1152, 704);
             }

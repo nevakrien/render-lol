@@ -33,17 +33,22 @@ target_link_libraries(playground PUBLIC box2d)
 
 find_package(Vulkan REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED NO_CMAKE_FIND_ROOT_PATH)
-find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+# Compile GLSL directly into the source shaders/ dir. This is both the runtime
+# hot-reload dir the app watches AND the source the Python embed script uses for
+# the in-binary fallback. Build (e.g. Sublime Ctrl+B) therefore produces the .spv.
+set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(SHADERS background.vert background.frag mesh.vert body.frag effect.frag)
-set(SPIRV_FILES)
 foreach(SHADER IN LISTS SHADERS)
-  set(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/shaders/${SHADER}.spv")
+  set(OUTPUT "${SHADER_DIR}/${SHADER}.spv")
   add_custom_command(OUTPUT "${OUTPUT}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
-    COMMAND ${GLSLANG_VALIDATOR} -V --target-env vulkan1.1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${SHADER}" -o "${OUTPUT}"
-    DEPENDS "shaders/${SHADER}" VERBATIM)
+    COMMAND ${GLSLANG_VALIDATOR} -V --target-env vulkan1.1 "${SHADER_DIR}/${SHADER}" -o "${OUTPUT}"
+    DEPENDS "${SHADER_DIR}/${SHADER}" VERBATIM)
   list(APPEND SPIRV_FILES "${OUTPUT}")
 endforeach()
+
+# Embed the .spv bytes as an in-binary fallback so the app still runs even when
+# the shaders/ dir is empty or unreachable.
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 set(SHADER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders.hpp")
 add_custom_command(OUTPUT "${SHADER_HEADER}"
   COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_shaders.py" "${SHADER_HEADER}" ${SPIRV_FILES}
@@ -57,7 +62,17 @@ else()
   add_executable(render-lol ${APP_SOURCES})
   set(APP_TARGET render-lol)
 endif()
-target_include_directories(${APP_TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_target(shaders ALL DEPENDS ${SPIRV_FILES})
+add_dependencies(${APP_TARGET} shaders)
+target_include_directories(${APP_TARGET} PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}/generated")  # for #include "shaders.hpp"
+# Runtime hot-reload dir: this is the source shaders/ dir that the build populates.
+if(ANDROID)
+  target_compile_definitions(${APP_TARGET} PRIVATE RUNTIME_SHADER_DIR="")
+else()
+  target_compile_definitions(${APP_TARGET} PRIVATE
+    RUNTIME_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+endif()
 target_link_libraries(${APP_TARGET} PRIVATE playground sound-mixer SDL3::SDL3 Vulkan::Vulkan)
 if(MSVC)
   target_compile_options(playground PRIVATE /W4)

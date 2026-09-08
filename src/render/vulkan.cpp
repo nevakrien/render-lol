@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <sys/stat.h>
+#include <unordered_map>
 
 namespace toy {
 void vkCheck(VkResult r, const char *op) {
@@ -43,7 +46,8 @@ bool hasExtension(VkPhysicalDevice device, const char *name) {
     return false;
 }
 } // namespace
-Vulkan::Vulkan(SDL_Window *w, bool validation) : window_(w) {
+Vulkan::Vulkan(SDL_Window *w, bool validation, const std::string &shaderDir)
+    : window_(w), shaderDir_(shaderDir) {
     try {
         initialize(validation);
     } catch (...) {
@@ -318,9 +322,40 @@ bool Vulkan::rebuild() {
     return true;
 }
 void Vulkan::addPass(std::unique_ptr<DrawPass> pass) { passes_.push_back(std::move(pass)); }
+namespace {
+std::unordered_map<std::string, time_t> &shaderTimestamps() {
+    static std::unordered_map<std::string, time_t> ts;
+    return ts;
+}
+bool checkShaderReloads(const std::string &dir) {
+    namespace fs = std::filesystem;
+    if (dir.empty() || !fs::exists(dir))
+        return false;
+    bool changed = false;
+    for (auto &entry : fs::directory_iterator(dir)) {
+        if (entry.path().extension() != ".spv")
+            continue;
+        struct stat st;
+        if (stat(entry.path().c_str(), &st) != 0)
+            continue;
+        auto &ts = shaderTimestamps();
+        auto prev = ts.find(entry.path().string());
+        if (prev == ts.end() || prev->second != st.st_mtime) {
+            ts[entry.path().string()] = st.st_mtime;
+            changed = true;
+        }
+    }
+    return changed;
+}
+} // namespace
 bool Vulkan::draw(const RenderFrame &frame, const std::string &capture) {
     if (dirty_ && !rebuild())
         return false;
+    if (checkShaderReloads(shaderDir_)) {
+        for (auto &pass : passes_)
+            pass->reloadShaders();
+        SDL_Log("render-lol: hot-reloaded shaders from '%s'", shaderDir_.c_str());
+    }
     vkCheck(vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX), "wait for frame");
     uint32_t index = 0;
     auto result =

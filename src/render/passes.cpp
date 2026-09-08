@@ -3,34 +3,92 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 
+#include <sys/stat.h>
+
 namespace toy {
 namespace {
-struct ShaderCode {
-    const uint32_t *words;
-    size_t size;
+// Holds a SPIR-V source. Owns file bytes when loaded from disk; otherwise points
+// at the embedded Python-generated fallback baked in at build time.
+struct Spv {
+    std::vector<uint32_t> owned; // file bytes when read from disk (word-aligned)
+    const uint32_t *ptr = nullptr;
+    size_t words = 0;
+    bool embedded = false;
 };
-template <size_t N> ShaderCode code(const uint32_t (&words)[N]) { return {words, sizeof(words)}; }
-// A convenience builder, not a mandatory shader or pipeline for every pass.
+std::unordered_map<std::string, bool> &warned() {
+    static std::unordered_map<std::string, bool> w;
+    return w;
+}
+Spv loadSpv(const std::string &dir, const std::string &name, const uint32_t *emb, size_t embWords) {
+    namespace fs = std::filesystem;
+    Spv out;
+    if (!dir.empty()) {
+        auto path = fs::path(dir) / (name + ".spv");
+        std::ifstream f(path, std::ios::binary | std::ios::ate);
+        if (f) {
+            auto sz = f.tellg();
+            f.seekg(0);
+            out.owned.resize(size_t(sz) / 4);
+            if (size_t(sz) % 4 != 0)
+                out.owned.resize(size_t(sz) / 4 + 1);
+            f.read(reinterpret_cast<char *>(out.owned.data()), sz);
+            out.ptr = out.owned.data();
+            out.words = (size_t(sz) + 3) / 4;
+            out.embedded = false;
+            return out;
+        }
+    }
+    // Fall back to the embedded build-time bytes and warn once.
+    auto &w = warned();
+    if (!w[name]) {
+        w[name] = true;
+        std::fprintf(stderr, "render-lol: warning: no %s.spv in '%s'; using embedded copy "
+                             "(recompile shaders for hot-reload)\n",
+                     name.c_str(), dir.c_str());
+    }
+    out.ptr = emb;
+    out.words = embWords;
+    out.embedded = true;
+    return out;
+}
 class Pipeline {
   public:
-    Pipeline(Vulkan &vk, ShaderCode vert, ShaderCode frag, bool mesh, bool additive = false)
-        : device(vk.device()) {
+    Pipeline(Vulkan &vk, const std::string &vertName, const std::string &fragName,
+             const uint32_t *vertEmb, size_t vertEmbWords, const uint32_t *fragEmb,
+             size_t fragEmbWords, bool mesh, bool additive = false)
+        : device_(vk.device()), renderPass_(vk.renderPass()),
+          shaderDir_(vk.shaderDir()), vertName_(vertName), fragName_(fragName),
+          vertEmb_(vertEmb), vertEmbWords_(vertEmbWords), fragEmb_(fragEmb),
+          fragEmbWords_(fragEmbWords), mesh_(mesh), additive_(additive) {
+        rebuild();
+    }
+    ~Pipeline() { destroy(); }
+    void rebuild() {
+        auto oldPipeline = handle_;
+        auto oldLayout = layout_;
+        handle_ = VK_NULL_HANDLE;
+        layout_ = VK_NULL_HANDLE;
+        auto vsSource = loadSpv(shaderDir_, vertName_, vertEmb_, vertEmbWords_);
+        auto fsSource = loadSpv(shaderDir_, fragName_, fragEmb_, fragEmbWords_);
         VkShaderModule vs = VK_NULL_HANDLE, fs = VK_NULL_HANDLE;
         try {
-            auto module = [&](ShaderCode c, VkShaderModule &out) {
+            auto module = [this](const Spv &s, VkShaderModule &out) {
                 VkShaderModuleCreateInfo ci{};
                 ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-                ci.codeSize = c.size;
-                ci.pCode = c.words;
-                vkCheck(vkCreateShaderModule(device, &ci, nullptr, &out), "create shader");
+                ci.codeSize = s.words * 4;
+                ci.pCode = s.ptr;
+                vkCheck(vkCreateShaderModule(device_, &ci, nullptr, &out), "create shader");
             };
-            module(vert, vs);
-            module(frag, fs);
+            module(vsSource, vs);
+            module(fsSource, fs);
             VkPipelineShaderStageCreateInfo stages[2]{};
             for (auto &s : stages) {
                 s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -47,7 +105,7 @@ class Pipeline {
                 {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)}};
             VkPipelineVertexInputStateCreateInfo vertex{};
             vertex.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-            if (mesh) {
+            if (mesh_) {
                 vertex.vertexBindingDescriptionCount = 1;
                 vertex.pVertexBindingDescriptions = &binding;
                 vertex.vertexAttributeDescriptionCount = 3;
@@ -74,7 +132,7 @@ class Pipeline {
             attachment.blendEnable = VK_TRUE;
             attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
             attachment.dstColorBlendFactor =
-                additive ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                additive_ ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             attachment.colorBlendOp = VK_BLEND_OP_ADD;
             attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
             attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -90,7 +148,7 @@ class Pipeline {
             dynamic.pDynamicStates = states;
             VkPipelineLayoutCreateInfo layoutInfo{};
             layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-            vkCheck(vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout),
+            vkCheck(vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &layout_),
                     "create pipeline layout");
             VkGraphicsPipelineCreateInfo ci{};
             ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -103,36 +161,52 @@ class Pipeline {
             ci.pMultisampleState = &multisample;
             ci.pColorBlendState = &blend;
             ci.pDynamicState = &dynamic;
-            ci.layout = layout;
-            ci.renderPass = vk.renderPass();
-            vkCheck(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &handle),
+            ci.layout = layout_;
+            ci.renderPass = renderPass_;
+            vkCheck(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr, &handle_),
                     "create graphics pipeline");
-            vkDestroyShaderModule(device, vs, nullptr);
-            vkDestroyShaderModule(device, fs, nullptr);
+            vkDestroyShaderModule(device_, vs, nullptr);
+            vkDestroyShaderModule(device_, fs, nullptr);
+            if (oldPipeline)
+                vkDestroyPipeline(device_, oldPipeline, nullptr);
+            if (oldLayout)
+                vkDestroyPipelineLayout(device_, oldLayout, nullptr);
         } catch (...) {
             if (vs)
-                vkDestroyShaderModule(device, vs, nullptr);
+                vkDestroyShaderModule(device_, vs, nullptr);
             if (fs)
-                vkDestroyShaderModule(device, fs, nullptr);
-            if (handle)
-                vkDestroyPipeline(device, handle, nullptr);
-            if (layout)
-                vkDestroyPipelineLayout(device, layout, nullptr);
+                vkDestroyShaderModule(device_, fs, nullptr);
+            if (handle_ && handle_ != oldPipeline)
+                vkDestroyPipeline(device_, handle_, nullptr);
+            if (layout_ && layout_ != oldLayout)
+                vkDestroyPipelineLayout(device_, layout_, nullptr);
+            handle_ = oldPipeline;
+            layout_ = oldLayout;
             throw;
         }
     }
-    ~Pipeline() {
-        vkDestroyPipeline(device, handle, nullptr);
-        vkDestroyPipelineLayout(device, layout, nullptr);
-    }
     void bind(VkCommandBuffer command) {
-        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, handle_);
     }
 
   private:
-    VkDevice device;
-    VkPipeline handle = VK_NULL_HANDLE;
-    VkPipelineLayout layout = VK_NULL_HANDLE;
+    void destroy() {
+        if (handle_)
+            vkDestroyPipeline(device_, handle_, nullptr);
+        if (layout_)
+            vkDestroyPipelineLayout(device_, layout_, nullptr);
+    }
+    VkDevice device_;
+    VkRenderPass renderPass_;
+    std::string shaderDir_;
+    std::string vertName_, fragName_;
+    const uint32_t *vertEmb_;
+    size_t vertEmbWords_;
+    const uint32_t *fragEmb_;
+    size_t fragEmbWords_;
+    bool mesh_, additive_;
+    VkPipeline handle_ = VK_NULL_HANDLE;
+    VkPipelineLayout layout_ = VK_NULL_HANDLE;
 };
 struct Mesh {
     explicit Mesh(Vulkan &vk)
@@ -178,12 +252,15 @@ class BackgroundPass final : public DrawPass {
 
   public:
     explicit BackgroundPass(Vulkan &vk)
-        : pipeline(vk, code(shaders::background_vert), code(shaders::background_frag), false) {}
+        : pipeline(vk, "background.vert", "background.frag", shaders::background_vert,
+                   sizeof(shaders::background_vert) / sizeof(uint32_t), shaders::background_frag,
+                   sizeof(shaders::background_frag) / sizeof(uint32_t), false) {}
     void prepare(const RenderFrame &) override {}
     void record(VkCommandBuffer c) override {
         pipeline.bind(c);
         vkCmdDraw(c, 3, 1, 0, 0);
     }
+    void reloadShaders() override { pipeline.rebuild(); }
 };
 class BodyPass final : public DrawPass {
     Pipeline pipeline;
@@ -191,7 +268,9 @@ class BodyPass final : public DrawPass {
 
   public:
     explicit BodyPass(Vulkan &vk)
-        : pipeline(vk, code(shaders::mesh_vert), code(shaders::body_frag), true), mesh(vk) {}
+        : pipeline(vk, "mesh.vert", "body.frag", shaders::mesh_vert,
+                   sizeof(shaders::mesh_vert) / sizeof(uint32_t), shaders::body_frag,
+                   sizeof(shaders::body_frag) / sizeof(uint32_t), true), mesh(vk) {}
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
         for (auto &b : frame.bodies) {
@@ -209,6 +288,7 @@ class BodyPass final : public DrawPass {
         pipeline.bind(c);
         mesh.draw(c);
     }
+    void reloadShaders() override { pipeline.rebuild(); }
 };
 class ImpactPass final : public DrawPass {
     Pipeline pipeline;
@@ -216,7 +296,10 @@ class ImpactPass final : public DrawPass {
 
   public:
     explicit ImpactPass(Vulkan &vk)
-        : pipeline(vk, code(shaders::mesh_vert), code(shaders::effect_frag), true, true), mesh(vk) {
+        : pipeline(vk, "mesh.vert", "effect.frag", shaders::mesh_vert,
+                   sizeof(shaders::mesh_vert) / sizeof(uint32_t), shaders::effect_frag,
+                   sizeof(shaders::effect_frag) / sizeof(uint32_t), true, true),
+          mesh(vk) {
     }
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
@@ -237,6 +320,7 @@ class ImpactPass final : public DrawPass {
         pipeline.bind(c);
         mesh.draw(c);
     }
+    void reloadShaders() override { pipeline.rebuild(); }
 };
 using Glyph = std::array<unsigned char, 7>;
 const std::unordered_map<char, Glyph> font = {
@@ -278,7 +362,9 @@ class HudPass final : public DrawPass {
 
   public:
     explicit HudPass(Vulkan &vk)
-        : pipeline(vk, code(shaders::mesh_vert), code(shaders::body_frag), true), mesh(vk) {}
+        : pipeline(vk, "mesh.vert", "body.frag", shaders::mesh_vert,
+                   sizeof(shaders::mesh_vert) / sizeof(uint32_t), shaders::body_frag,
+                   sizeof(shaders::body_frag) / sizeof(uint32_t), true), mesh(vk) {}
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
         text("RENDER LOL", -8, 5.14f, .047f, {.85f, .91f, 1});
@@ -294,6 +380,7 @@ class HudPass final : public DrawPass {
         pipeline.bind(c);
         mesh.draw(c);
     }
+    void reloadShaders() override { pipeline.rebuild(); }
 };
 } // namespace
 void installPasses(Vulkan &vk) {

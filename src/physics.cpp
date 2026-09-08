@@ -316,7 +316,7 @@ void Physics::step() {
         b2Vec2 tgt = {state.target.x, state.target.y};
         b2Vec2 delta = {tgt.x - grab.x, tgt.y - grab.y};
         b2Vec2 vel = b2Body_GetLinearVelocity(object->bodyId);
-        b2Vec2 force = {delta.x * 50.0f - vel.x * 15.0f, delta.y * 50.0f - vel.y * 15.0f};
+        b2Vec2 force = {delta.x * 200.0f - vel.x * 25.0f, delta.y * 200.0f - vel.y * 25.0f};
         b2Body_ApplyForce(object->bodyId, force, b2Body_GetWorldCenterOfMass(object->bodyId),
                           true);
     }

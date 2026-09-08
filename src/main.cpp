@@ -13,11 +13,13 @@
 int main(int argc, char **argv) {
     bool validation = false, smoke = false;
     int frameLimit = 0;
-    std::string capture;
+    std::string capture, shaderDir;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--validate")
             validation = true;
+        else if (arg == "--shaders" && i + 1 < argc)
+            shaderDir = argv[++i];
         else if (arg == "--smoke") {
             smoke = true;
             frameLimit = 240;
@@ -35,7 +37,7 @@ int main(int argc, char **argv) {
             }
         } else {
             std::cout << "Usage: render-lol [--validate] [--smoke] [--frames N] "
-                         "[--capture frame.ppm]\n";
+                         "[--capture frame.ppm] [--shaders DIR]\n";
             return arg == "--help" ? 0 : 1;
         }
     }
@@ -52,7 +54,11 @@ int main(int argc, char **argv) {
             SDL_DestroyWindow);
         if (!window)
             throw std::runtime_error(SDL_GetError());
-        toy::Vulkan renderer(window.get(), validation);
+#ifndef RUNTIME_SHADER_DIR
+#define RUNTIME_SHADER_DIR ""
+#endif
+        std::string shaders = shaderDir.empty() ? RUNTIME_SHADER_DIR : shaderDir;
+        toy::Vulkan renderer(window.get(), validation, shaders);
         toy::installPasses(renderer);
         toy::Physics physics;
         toy::Audio audio;

@@ -67,5 +67,8 @@ vcpkg_installed/
 Testing/
 .cache/
 
+# SPIR-V compiled at runtime/dev (IDE-generated hot-reload shaders)
+shaders/*.spv
+
 # Original clone metadata is local; dependency source snapshots are vendored.
 /3rd_party/.clone-metadata/

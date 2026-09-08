@@ -102,13 +102,14 @@ class Pipeline {
             VkVertexInputAttributeDescription attributes[] = {
                 {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, position)},
                 {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, color)},
-                {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)}};
+                {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
+                {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, shapeId)}};
             VkPipelineVertexInputStateCreateInfo vertex{};
             vertex.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
             if (mesh_) {
                 vertex.vertexBindingDescriptionCount = 1;
                 vertex.pVertexBindingDescriptions = &binding;
-                vertex.vertexAttributeDescriptionCount = 3;
+                vertex.vertexAttributeDescriptionCount = 4;
                 vertex.pVertexAttributeDescriptions = attributes;
             }
             VkPipelineInputAssemblyStateCreateInfo assembly{};
@@ -307,12 +308,16 @@ class ImpactPass final : public DrawPass {
             float size = .12f + r.age * (1.5f + r.strength * .12f);
             Color color = r.color;
             color.a = (1 - r.age / .6f) * .8f;
+            float cs = cosf(r.rotation), sn = sinf(r.rotation);
             Vec2 corners[] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-            for (int i : {0, 1, 2, 0, 2, 3})
+            for (int i : {0, 1, 2, 0, 2, 3}) {
+                float lx = corners[i].x * size, ly = corners[i].y * size;
                 mesh.vertices.push_back(
-                    {{r.point.x + corners[i].x * size, r.point.y + corners[i].y * size},
+                    {{r.point.x + lx * cs - ly * sn, r.point.y + lx * sn + ly * cs},
                      color,
-                     corners[i]});
+                     corners[i],
+                     r.shapeId});
+            }
         }
         mesh.upload();
     }

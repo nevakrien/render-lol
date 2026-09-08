@@ -230,7 +230,8 @@ int main(int argc, char **argv) {
                     audio.play(hits);
                     for (auto &hit : hits) {
                         if (frame.ripples.size() < 128)
-                            frame.ripples.push_back({hit.point, hit.color, 0, hit.strength});
+                            frame.ripples.push_back({hit.point, hit.color, 0, hit.strength,
+                                                     hit.shapeId, hit.rotation});
                     }
                 }
                 for (auto &ripple : frame.ripples)

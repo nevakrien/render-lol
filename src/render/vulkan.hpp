@@ -12,6 +12,7 @@ struct Vertex {
     Vec2 position;
     Color color;
     Vec2 uv{};
+    float shapeId = 0;
 };
 struct RenderFrame {
     std::vector<BodyView> bodies;
@@ -20,6 +21,8 @@ struct RenderFrame {
         Color color;
         float age;
         float strength;
+        float shapeId = 0;
+        float rotation = 0;
     };
     std::vector<Ripple> ripples;
     bool wireframe = false;

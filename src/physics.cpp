@@ -348,7 +348,8 @@ void Physics::step() {
                 }
             state.impacts.push_back(
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
-                 key.first, key.second});
+                 key.first, key.second, owner ? float(owner->shape) : 0.0f,
+                 owner ? state.bodyRotation(owner->bodyId) : 0.0f});
             state.points += uint64_t(strength * 10);
             state.lastImpact[key] = state.time;
         }

@@ -23,6 +23,8 @@ struct Impact {
     Color color;
     float strength;
     int a, b;
+    float shapeId = 0;
+    float rotation = 0;
 };
 struct PhysicsStats {
     int rigidContacts = 0;

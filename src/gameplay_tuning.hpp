@@ -70,12 +70,12 @@ inline constexpr int additionalCracks = 6;
 // Collision audio follows output power but fades further near burnout.
 inline constexpr float minimumAudibleImpact = .1f;
 inline constexpr float audioFadeHeat = .8f;
-inline constexpr float baseDetune = .08f;
+inline constexpr float baseDetune = .04f;
 inline constexpr float heatDetune = .14f;
 inline constexpr float maximumPitchDrop = .32f;
 inline constexpr float baseImpactFrequency = 220.0f;
-inline constexpr float impactPitchStep = 55.0f;
+inline constexpr float impactPitchStep = 120.0f;
 inline constexpr float baseImpactAmplitude = .05f;
-inline constexpr float impactAmplitudeScale = .28f;
+inline constexpr float impactAmplitudeScale = .12f;
 inline constexpr float maximumAudioStrength = 1.5f;
 } // namespace toy::tuning

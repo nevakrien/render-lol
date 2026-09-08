@@ -17,6 +17,9 @@ struct BodyView {
     Vec2 center;
     std::vector<Vec2> outline;
     std::vector<Vec2> triangles;
+    float heat = 0;
+    float effectTime = 0;
+    bool overheated = false;
 };
 struct Impact {
     Vec2 point;
@@ -26,6 +29,7 @@ struct Impact {
     float shapeId = 0;
     float rotation = 0;
     float seed = 0;
+    float heat = 0;
 };
 struct PhysicsStats {
     int rigidContacts = 0;
@@ -52,6 +56,7 @@ class Physics {
     PhysicsStats stats() const;
     bool healthy() const;
     uint64_t score() const;
+    void setScore(uint64_t score);
 
   private:
     struct Impl;

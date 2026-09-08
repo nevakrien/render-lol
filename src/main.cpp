@@ -1,4 +1,5 @@
 #include "audio.hpp"
+#include "gameplay_tuning.hpp"
 #include "physics.hpp"
 #include "render/passes.hpp"
 #include <SDL3/SDL.h>
@@ -31,6 +32,16 @@ std::string settingsPath() {
     return "settings.ini";
 }
 
+std::string scorePath() {
+#ifdef __ANDROID__
+    if (const char *path = SDL_GetAndroidInternalStoragePath())
+        return std::string(path) + "/score.bin";
+#endif
+    if (const char *path = SDL_GetBasePath())
+        return std::string(path) + "score.bin";
+    return "score.bin";
+}
+
 AppSettings loadSettings(const std::string &path) {
     AppSettings settings;
     std::ifstream input(path);
@@ -61,6 +72,22 @@ void saveSettings(const std::string &path, const AppSettings &settings) {
     output << "volume " << settings.volume << '\n'
            << "muted " << settings.muted << '\n'
            << "explosion_size " << settings.explosionSize << '\n';
+}
+
+uint64_t loadScore(const std::string &path) {
+    uint64_t score = 0;
+    std::ifstream input(path, std::ios::binary);
+    input.read(reinterpret_cast<char *>(&score), sizeof(score));
+    return input.gcount() == sizeof(score) ? score : 0;
+}
+
+void saveScore(const std::string &path, uint64_t score) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        SDL_Log("Could not save score to %s", path.c_str());
+        return;
+    }
+    output.write(reinterpret_cast<const char *>(&score), sizeof(score));
 }
 } // namespace
 
@@ -141,7 +168,9 @@ int main(int argc, char **argv) {
         toy::Audio audio;
         toy::RenderFrame frame;
         const std::string configPath = settingsPath();
+        const std::string savedScorePath = scorePath();
         AppSettings settings = loadSettings(configPath);
+        physics.setScore(loadScore(savedScorePath));
         audio.setVolume(settings.volume);
         if (settings.muted)
             audio.toggleMute();
@@ -218,7 +247,9 @@ int main(int argc, char **argv) {
                     return false;
             }
             if (settingsChanged) {
-                settings = {audio.volume(), audio.muted(), explosionSize};
+                settings.volume = audio.volume();
+                settings.muted = audio.muted();
+                settings.explosionSize = explosionSize;
                 saveSettings(configPath, settings);
             }
             title();
@@ -382,7 +413,8 @@ int main(int argc, char **argv) {
                     auto hits = physics.takeImpacts();
                     audio.play(hits);
                     for (auto &hit : hits) {
-                        if (frame.ripples.size() < 128)
+                        if (hit.strength > toy::tuning::visibleImpactThreshold &&
+                            frame.ripples.size() < 128)
                             frame.ripples.push_back({hit.point, hit.color, 0, hit.strength,
                                                      hit.shapeId, hit.rotation, hit.seed});
                     }
@@ -390,12 +422,16 @@ int main(int argc, char **argv) {
                 for (auto &ripple : frame.ripples)
                     ripple.age += float(dt);
                 frame.ripples.erase(std::remove_if(frame.ripples.begin(), frame.ripples.end(),
-                                                   [](auto &r) { return r.age >= .6f; }),
-                                    frame.ripples.end());
+                                                   [](auto &r) {
+                                                       return r.age >=
+                                                              toy::tuning::impactLifetimeSeconds;
+                                                   }),
+                                     frame.ripples.end());
             } else
                 accumulator = 0;
             frame.bodies = physics.snapshot();
             frame.score = physics.score();
+            saveScore(savedScorePath, frame.score);
             frame.menuScreen = menuScreen;
             frame.volume = audio.volume();
             frame.muted = audio.muted();

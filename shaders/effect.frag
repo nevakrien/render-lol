@@ -3,6 +3,7 @@
 layout(location = 0) in vec4 vertexColor;
 layout(location = 1) in vec2 local;
 layout(location = 2) in flat float shapeId;
+layout(location = 3) in vec3 effectData;
 
 layout(location = 0) out vec4 color;
 
@@ -15,6 +16,7 @@ const float OUTER_FADE_END = 0.84;
 
 const float RECT_HALF_X = 0.85;
 const float RECT_HALF_Y = 0.65;
+const float FULL_INTENSITY_STRENGTH = 0.35;
 
 float sdEquilateralTriangle(vec2 p) {
     const float k = sqrt(3.0);
@@ -42,7 +44,8 @@ void main() {
     float ringBand = 1.0 - smoothstep(RING_FADE_START, RING_FADE_END, dist);
     float outerFade = 1.0 - smoothstep(OUTER_FADE_START, OUTER_FADE_END, d);
 
-    float alpha = ringBand * outerFade;
+    float intensity = smoothstep(0.0, FULL_INTENSITY_STRENGTH, effectData.z);
+    float alpha = ringBand * outerFade * intensity;
 
     color = vec4(vertexColor.rgb, vertexColor.a * alpha);
 }

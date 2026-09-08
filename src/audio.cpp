@@ -1,6 +1,8 @@
 #include "audio.hpp"
+#include "gameplay_tuning.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 namespace toy {
 Audio::Audio() {
@@ -36,8 +38,26 @@ void Audio::play(const std::vector<Impact> &impacts) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (muted_)
         return;
-    for (auto &hit : impacts)
-        mixer_.trigger(220 + float(hit.b % 7) * 55, .12f + hit.strength * .38f);
+    for (auto &hit : impacts) {
+        if (hit.strength < tuning::minimumAudibleImpact || hit.heat >= tuning::heatBurnout)
+            continue;
+        float critical = std::clamp((hit.heat - tuning::audioFadeHeat) /
+                                        (tuning::heatBurnout - tuning::audioFadeHeat),
+                                    0.0f, 1.0f);
+        float liveness = tuning::normalizedHeatPower(hit.heat);
+        float detune = 1.0f +
+                       (hit.seed - .5f) * (tuning::baseDetune + tuning::heatDetune * liveness);
+        float pitch = (tuning::baseImpactFrequency +
+                       float(std::abs(hit.b) % 7) * tuning::impactPitchStep) *
+                      detune;
+        pitch *= 1.0f - tuning::maximumPitchDrop * critical;
+        float amplitude =
+            (tuning::baseImpactAmplitude +
+             std::min(hit.strength, tuning::maximumAudioStrength) *
+                 tuning::impactAmplitudeScale) *
+            (1.0f - critical);
+        mixer_.trigger(pitch, amplitude);
+    }
 }
 void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional, int) {
     auto &self = *static_cast<Audio *>(userdata);

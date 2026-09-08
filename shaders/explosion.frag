@@ -5,6 +5,7 @@ layout(location=3) in vec3 effectData;
 layout(location=0) out vec4 outColor;
 
 const float PI = 3.14159265359;
+const float EXPLOSION_RADIUS = 0.4;
 
 float hashNoise(vec2 p, float t, float seed) {
     p += t * 0.1;
@@ -26,10 +27,9 @@ void main() {
     float dist = length(uv - vec2(0.5));
     float random = hashNoise(uv, t, effectData.y);
     float random2 = mod(17.0 * random, 1.0);
-    float strength = effectData.z * 100.0;
-    float power = 1.0 - exp(-strength / 100.0);
+    float power = 1.0 - exp(-effectData.z);
     float phase = sin(PI * t);
-    float alpha = smoothstep(0.4 * phase, 0.0, dist);
+    float alpha = smoothstep(EXPLOSION_RADIUS * phase, 0.0, dist) * power;
 
     vec3 innerColor = vec3(1.0, 237.0 / 255.0, 76.0 / 255.0);
     vec3 fastColor = vec3(1.0, 244.0 / 255.0, 186.0 / 255.0);

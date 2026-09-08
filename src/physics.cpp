@@ -1,4 +1,5 @@
 #include "physics.hpp"
+#include "gameplay_tuning.hpp"
 #include <box2d/box2d.h>
 #include <algorithm>
 #include <cmath>
@@ -31,6 +32,17 @@ struct Object {
     Color color{};
     b2BodyId bodyId = b2_nullBodyId;
     b2ShapeId shapeId = b2_nullShapeId;
+    float heat = 0;
+    float lastWallHit = -100;
+    int lastWall = 0;
+    float collisionLoad = 0;
+    float baseRestitution = 0;
+    bool overheated = false;
+};
+
+struct PairState {
+    float freshness = 1;
+    float lastHit = -100;
 };
 } // namespace
 
@@ -39,6 +51,7 @@ struct Physics::Impl {
     std::vector<Object> objects;
     std::vector<Object> walls;
     std::map<int, int> bodyToObject; // bodyId.index1 -> object id
+    std::map<std::pair<int, int>, PairState> pairs;
     std::vector<Impact> impacts;
     PhysicsStats counters;
     int nextId = 1;
@@ -47,6 +60,11 @@ struct Physics::Impl {
     float time = 0;
     uint64_t points = 0;
     bool gravity = false;
+
+    static bool oppositeWalls(int a, int b) {
+        return (a == -1 && b == -2) || (a == -2 && b == -1) ||
+               (a == -3 && b == -4) || (a == -4 && b == -3);
+    }
 
     Impl() {
         b2WorldDef def = b2DefaultWorldDef();
@@ -190,6 +208,7 @@ struct Physics::Impl {
         objects.clear();
         walls.clear();
         bodyToObject.clear();
+        pairs.clear();
         impacts.clear();
         counters = {};
         nextId = 1;
@@ -242,6 +261,7 @@ int Physics::spawn(Shape shape, Vec2 position, Vec2 velocity) {
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.friction = 0.2f;
     shapeDef.restitution = shape == Shape::Circle ? 0.93f : 0.8f;
+    obj.baseRestitution = shapeDef.restitution;
     shapeDef.density = 1.0f;
     shapeDef.enableHitEvents = true;
 
@@ -303,6 +323,9 @@ void Physics::step() {
     auto &state = *impl;
     state.time += stepSize;
 
+    for (auto &object : state.objects)
+        object.collisionLoad = 0;
+
     if (auto *object = state.find(state.dragObjectId)) {
         b2Vec2 bodyPos = b2Body_GetPosition(object->bodyId);
         b2Vec2 delta = {state.target.x - bodyPos.x, state.target.y - bodyPos.y};
@@ -324,8 +347,52 @@ void Physics::step() {
             continue;
 
         auto key = std::minmax(idA, idB);
-        float strength = hit.approachSpeed / 8.0f;
-        strength = std::clamp(strength, 0.0f, 1.0f);
+        float physicalStrength = hit.approachSpeed / tuning::fullImpactSpeed;
+        physicalStrength = std::clamp(physicalStrength, 0.0f, 1.0f);
+
+        auto &pair = state.pairs[{key.first, key.second}];
+        float elapsed = state.time - pair.lastHit;
+        pair.freshness =
+            std::min(1.0f, pair.freshness + elapsed / tuning::pairFreshnessRecoverySeconds);
+        float freshness = pair.freshness;
+        pair.freshness *= tuning::pairFreshnessDecay;
+        pair.lastHit = state.time;
+
+        Object *objectA = state.find(idA);
+        Object *objectB = state.find(idB);
+        float heatMultiplier = 1.0f;
+        if (objectA && objectB)
+            heatMultiplier =
+                std::min(tuning::heatPower(objectA->heat), tuning::heatPower(objectB->heat));
+        else if (objectA)
+            heatMultiplier = tuning::heatPower(objectA->heat);
+        else if (objectB)
+            heatMultiplier = tuning::heatPower(objectB->heat);
+
+        float routeMultiplier = 1.0f;
+        int wallId = idA < 0 ? idA : (idB < 0 ? idB : 0);
+        Object *wallHitter = objectA ? objectA : objectB;
+        bool creditWall = wallId && wallHitter && freshness >= tuning::routeFreshnessThreshold;
+        bool ventHeat = false;
+        if (creditWall) {
+            if (state.time - wallHitter->lastWallHit <= tuning::routeWindowSeconds) {
+                if (state.oppositeWalls(wallHitter->lastWall, wallId)) {
+                    routeMultiplier = tuning::oppositeWallMultiplier;
+                    ventHeat = true;
+                } else if (wallHitter->lastWall != 0 && wallHitter->lastWall != wallId) {
+                    routeMultiplier = tuning::adjacentWallMultiplier;
+                }
+            }
+        }
+
+        float outputMultiplier = freshness * heatMultiplier * routeMultiplier;
+        float strength = physicalStrength * outputMultiplier;
+        float displayHeat = 0;
+        for (Object *object : {objectA, objectB}) {
+            if (!object)
+                continue;
+            displayHeat = std::max(displayHeat, object->heat);
+        }
 
         {
             const Object *owner = nullptr;
@@ -337,13 +404,52 @@ void Physics::step() {
             state.impacts.push_back(
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
                   key.first, key.second, owner ? float(owner->shape) : 0.0f,
-                  owner ? state.bodyRotation(owner->bodyId) : 0.0f,
-                  std::fmod(std::abs(std::sin(state.time * 91.7f + hit.point.x * 17.3f +
-                                             hit.point.y * 37.1f)),
-                            1.0f)});
-            state.points += 1 + uint64_t(strength * 10);
+                   owner ? state.bodyRotation(owner->bodyId) : 0.0f,
+                   std::fmod(std::abs(std::sin(state.time * 91.7f + hit.point.x * 17.3f +
+                                              hit.point.y * 37.1f)),
+                            1.0f),
+                   displayHeat});
+            state.points += uint64_t(
+                (1.0f + physicalStrength * tuning::fullImpactPointBonus) * outputMultiplier);
         }
+
+        // State changes happen after emission so the collision that crosses a
+        // heat boundary still lands at its pre-impact power.
+        if (creditWall) {
+            wallHitter->lastWall = wallId;
+            wallHitter->lastWallHit = state.time;
+            if (ventHeat)
+                wallHitter->heat =
+                    std::max(0.0f, wallHitter->heat - tuning::oppositeWallHeatVent);
+        }
+        float collisionLoad = tuning::collisionLoadBase +
+                              physicalStrength * tuning::collisionLoadFromStrength +
+                              (1.0f - freshness) * tuning::collisionLoadFromStaleness;
+        if (objectA)
+            objectA->collisionLoad += collisionLoad;
+        if (objectB)
+            objectB->collisionLoad += collisionLoad;
         ++state.counters.rigidContacts;
+    }
+
+    float blend = 1.0f - std::exp(-stepSize / tuning::heatSmoothingSeconds);
+    for (auto &object : state.objects) {
+        object.heat += (object.collisionLoad - object.heat) * blend;
+        object.heat = std::clamp(object.heat, 0.0f, tuning::heatMaximum);
+        object.overheated = object.heat >= tuning::heatPeak;
+        float restitution;
+        if (object.heat <= tuning::heatPeak) {
+            float hot = object.heat / tuning::heatPeak;
+            restitution = object.baseRestitution +
+                          (tuning::peakRestitution - object.baseRestitution) * hot;
+        } else {
+            float damaged = std::clamp((object.heat - tuning::heatPeak) /
+                                           tuning::heatVisualDamageRange,
+                                       0.0f, 1.0f);
+            restitution = tuning::peakRestitution +
+                          (tuning::burnoutRestitution - tuning::peakRestitution) * damaged;
+        }
+        b2Shape_SetRestitution(object.shapeId, restitution);
     }
 }
 
@@ -356,7 +462,8 @@ std::vector<BodyView> Physics::snapshot() const {
         auto outline = impl->polygonOutline(obj.bodyId, obj.shape);
         auto triangles = impl->triangleMesh(obj.bodyId, obj.shape);
         Vec2 center = impl->bodyPosition(obj.bodyId);
-        result.push_back({obj.id, obj.color, center, std::move(outline), std::move(triangles)});
+        result.push_back({obj.id, obj.color, center, std::move(outline), std::move(triangles),
+                          obj.heat, impl->time, obj.overheated});
     }
     return result;
 }
@@ -369,6 +476,7 @@ std::vector<Impact> Physics::takeImpacts() {
 
 PhysicsStats Physics::stats() const { return impl->counters; }
 uint64_t Physics::score() const { return impl->points; }
+void Physics::setScore(uint64_t score) { impl->points = score; }
 
 bool Physics::healthy() const {
     for (auto &obj : impl->objects) {

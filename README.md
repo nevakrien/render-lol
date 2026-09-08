@@ -42,6 +42,14 @@ cmake --build build --parallel
 ./build/render-lol
 ```
 
+For an optimized desktop build, use a separate release directory:
+
+```sh
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel
+./build-release/render-lol
+```
+
 A Vulkan-capable driver is required. On Windows, use a C++ toolchain and the
 Vulkan SDK, with `glslangValidator` on PATH; multi-config generators put the
 executable in `build/Debug` or `build/Release`. The desktop build has been
@@ -75,8 +83,9 @@ fly, so editing a `.glsl` file and recompiling to `.spv` hot-reloads instantly.
 | Settings buttons | Change volume, mute audio, or select explosion size |
 
 Volume, mute, and collision-effect size are saved in `settings.ini` beside the executable
-(in internal app storage on Android). The default volume is 50%, with the previous output
-level at 50% and up to 2x gain available at 100%. `Big` is the default effect size.
+(in internal app storage on Android). The score is stored separately as an 8-byte
+`score.bin` file. The default volume is 50%, with the previous output level at 50% and up
+to 2x gain available at 100%. `Big` is the default effect size.
 
 Desktop debug shortcuts:
 
@@ -140,7 +149,7 @@ rigid/soft picking and dragging, reset, and 30 simulated seconds of a mixed
 world under gravity. Audio tests verify staggered contacts overlap
 sample-for-sample, voice completion, dense mixes and clearing voices.
 
-### Keeping Android open
+### Android build and install
 
 The physics and mixer are platform-independent, pointer input also accepts
 SDL touch events, and the view letterboxes to preserve the arena ratio.
@@ -148,10 +157,27 @@ Shaders are embedded. CMake selects `libmain.so` and shared SDL3 on Android,
 with position-independent libraries. The event loop stops simulation while
 backgrounded and refreshes presentation on return.
 
-There is **no tested APK target yet**. The next step is to use the vendored
-`3rd_party/SDL/android-project` Gradle/SDLActivity template, point its external
-CMake build at the root project, and package `libSDL3.so` and `libmain.so`.
-Use the Android NDK and a host `glslangValidator`/Python. Android 10+, ARM64 and
-Vulkan 1.1 are the intended initial target. Device testing, surface recreation
-across the full Android lifecycle, and touch controls for the keyboard-only
-menu actions still need work.
+The Android target requires Android SDK 35, an Android NDK supported by the
+Android Gradle plugin, Java, Python, and a host `glslangValidator`. It currently
+targets Android 9+ ARM64 devices with Vulkan 1.1.
+
+Build, install, launch, and watch shaders on a USB-connected debug device:
+
+```sh
+./scripts/android-deploy.sh
+```
+
+Build an optimized, installable release APK to share with another Android
+device:
+
+```sh
+./scripts/build-android-release.sh
+```
+
+The script writes `render-lol.apk` in the project root. Transfer that file to
+the device and open it to install; Android may ask for permission to install
+unknown apps. For convenience this private release uses the Android debug
+signing key, so it is suitable for direct sideloading but not for publishing to
+an app store. `./scripts/android-deploy.sh --release` instead builds, installs,
+and launches the release on a connected device. Shader hot-reload is available
+only in debug builds because release apps do not permit `adb run-as`.

@@ -1,4 +1,5 @@
 #include "passes.hpp"
+#include "gameplay_tuning.hpp"
 #include "shaders.hpp"
 #include <algorithm>
 #include <array>
@@ -251,6 +252,14 @@ struct Mesh {
         triangle(p, q, r, c);
         triangle(p, r, s, c);
     }
+    void circle(Vec2 center, float radius, Color color, int segments = 12) {
+        for (int i = 0; i < segments; ++i) {
+            float a = float(i) / segments * 2.0f * 3.14159265f;
+            float b = float(i + 1) / segments * 2.0f * 3.14159265f;
+            triangle(center, {center.x + cosf(a) * radius, center.y + sinf(a) * radius},
+                     {center.x + cosf(b) * radius, center.y + sinf(b) * radius}, color);
+        }
+    }
 };
 class BackgroundPass final : public DrawPass {
     Pipeline pipeline;
@@ -279,11 +288,140 @@ class BodyPass final : public DrawPass {
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
         for (auto &b : frame.bodies) {
+            float critical =
+                std::clamp((b.heat - tuning::heatPeak) / tuning::heatVisualDamageRange, 0.0f,
+                           1.0f);
+            Color bodyColor = b.color;
+
+            float shake = critical * critical * tuning::maximumShake;
+            Vec2 offset{shake * sinf(b.effectTime * 47.0f + b.id * 2.1f),
+                        shake * sinf(b.effectTime * 61.0f + b.id * 3.7f)};
+            auto shifted = [&](Vec2 p) { return Vec2{p.x + offset.x, p.y + offset.y}; };
+            auto random = [&](int salt) {
+                float value = sinf(b.id * 12.9898f + salt * 78.233f) * 43758.5453f;
+                return value - floorf(value);
+            };
+            float firePresence = std::clamp((b.heat - tuning::heatFireAppearance) /
+                                                (tuning::heatPeak - tuning::heatFireAppearance),
+                                            0.0f, 1.0f);
+            float blue = std::clamp((b.heat - tuning::heatPeak) /
+                                        tuning::heatPowerDeclineRange,
+                                    0.0f, 1.0f);
+            float burned = std::clamp((b.heat - tuning::heatPowerDeclineEnd) /
+                                          tuning::heatBurnoutRange,
+                                      0.0f, 1.0f);
+            float fireOpacity =
+                firePresence * (tuning::burnedSurfaceOpacity +
+                                (tuning::heatSurfaceOpacity - tuning::burnedSurfaceOpacity) *
+                                    tuning::normalizedHeatPower(b.heat));
             for (size_t i = 0; i + 2 < b.triangles.size(); i += 3)
-                mesh.triangle(b.triangles[i], b.triangles[i + 1], b.triangles[i + 2], b.color);
-            Color edge{b.color.r * .6f, b.color.g * .6f, b.color.b * .6f, 1};
+                mesh.triangle(shifted(b.triangles[i]), shifted(b.triangles[i + 1]),
+                              shifted(b.triangles[i + 2]), bodyColor);
+            Color edge{bodyColor.r * .6f, bodyColor.g * .6f, bodyColor.b * .6f, 1};
             for (size_t i = 0; i < b.outline.size(); ++i)
-                mesh.line(b.outline[i], b.outline[(i + 1) % b.outline.size()], .028f, edge);
+                mesh.line(shifted(b.outline[i]), shifted(b.outline[(i + 1) % b.outline.size()]),
+                          .028f, edge);
+
+            if (firePresence > 0 && !b.outline.empty()) {
+                Vec2 center = shifted(b.center);
+                int spotLimit =
+                    tuning::minimumFireSpots + int(random(200) * tuning::additionalFireSpots);
+                int spotCount = int(firePresence * spotLimit + .5f);
+                for (int i = 0; i < spotCount; ++i) {
+                    size_t edgeIndex =
+                        size_t(random(201 + i * 6) * b.outline.size()) % b.outline.size();
+                    size_t next = (edgeIndex + 1) % b.outline.size();
+                    float along = random(202 + i * 6);
+                    Vec2 a = shifted(b.outline[edgeIndex]);
+                    Vec2 c = shifted(b.outline[next]);
+                    Vec2 boundary{a.x + (c.x - a.x) * along, a.y + (c.y - a.y) * along};
+                    float depth = .12f + random(203 + i * 6) * .7f;
+                    Vec2 point{center.x + (boundary.x - center.x) * depth,
+                               center.y + (boundary.y - center.y) * depth};
+
+                    float core = random(204 + i * 6);
+                    Color warm{1.0f, .08f + core * .6f, .015f + core * .06f, 1};
+                    Color blueFire{.06f + core * .3f, .24f + core * .5f, 1.0f, 1};
+                    Color fire{warm.r + (blueFire.r - warm.r) * blue,
+                               warm.g + (blueFire.g - warm.g) * blue,
+                               warm.b + (blueFire.b - warm.b) * blue, 1};
+                    constexpr Color ash{.35f, .37f, .4f, 1};
+                    fire.r += (ash.r - fire.r) * burned;
+                    fire.g += (ash.g - fire.g) * burned;
+                    fire.b += (ash.b - fire.b) * burned;
+                    fire.a = fireOpacity * (.55f + random(205 + i * 6) * .45f);
+                    float radius = tuning::minimumFireSpotRadius +
+                                   random(206 + i * 6) * tuning::additionalFireSpotRadius;
+                    mesh.circle(point, radius, fire, 9);
+                }
+            }
+
+            if (critical > tuning::damageAppearanceThreshold && !b.outline.empty()) {
+                Vec2 center = shifted(b.center);
+                int spotLimit = tuning::minimumDamageSpots +
+                                int(random(1) * tuning::additionalDamageSpots);
+                int spotCount = int(critical * spotLimit + .5f);
+                for (int i = 0; i < spotCount; ++i) {
+                    size_t edge = size_t(random(10 + i * 5) * b.outline.size()) % b.outline.size();
+                    size_t next = (edge + 1) % b.outline.size();
+                    float along = random(11 + i * 5);
+                    Vec2 a = shifted(b.outline[edge]);
+                    Vec2 c = shifted(b.outline[next]);
+                    Vec2 boundary{a.x + (c.x - a.x) * along, a.y + (c.y - a.y) * along};
+                    float depth = .16f + random(12 + i * 5) * .53f;
+                    Vec2 point{center.x + (boundary.x - center.x) * depth,
+                               center.y + (boundary.y - center.y) * depth};
+                    float shade = .07f + random(13 + i * 5) * .09f;
+                    Color spot{shade * .85f, shade, shade * .82f,
+                               (.2f + random(14 + i * 5) * .3f) * critical};
+                    mesh.circle(point, .025f + random(15 + i * 5) * .075f, spot, 9);
+                }
+
+                int crackLimit =
+                    tuning::minimumCracks + int(random(2) * tuning::additionalCracks);
+                int crackCount = std::max(1, int(critical * crackLimit + random(3)));
+                Color crack{.09f, .08f, .08f, .45f + critical * .5f};
+                for (int i = 0; i < crackCount; ++i) {
+                    size_t edge = size_t(random(100 + i * 8) * b.outline.size()) % b.outline.size();
+                    size_t next = (edge + 1) % b.outline.size();
+                    float along = random(101 + i * 8);
+                    Vec2 a = shifted(b.outline[edge]);
+                    Vec2 c = shifted(b.outline[next]);
+                    Vec2 boundary{a.x + (c.x - a.x) * along, a.y + (c.y - a.y) * along};
+                    Vec2 direction{boundary.x - center.x, boundary.y - center.y};
+                    Vec2 perpendicular{-direction.y, direction.x};
+                    auto pathPoint = [&](float depth, float bend) {
+                        return Vec2{center.x + direction.x * depth + perpendicular.x * bend,
+                                    center.y + direction.y * depth + perpendicular.y * bend};
+                    };
+                    float bendA = (random(102 + i * 8) - .5f) * .3f;
+                    float bendB = (random(103 + i * 8) - .5f) * .24f;
+                    Vec2 outer = pathPoint(.72f + random(104 + i * 8) * .18f, 0);
+                    Vec2 middleA = pathPoint(.55f, bendA);
+                    Vec2 middleB = pathPoint(.34f, bendB);
+                    Vec2 inner = pathPoint(.15f + random(105 + i * 8) * .12f, 0);
+                    float width = .022f + random(106 + i * 8) * .017f;
+                    mesh.line(outer, middleA, width, crack);
+                    mesh.line(middleA, middleB, width * .9f, crack);
+                    mesh.line(middleB, inner, width * .75f, crack);
+                    float branchSide = random(107 + i * 8) < .5f ? -.15f : .15f;
+                    Vec2 branch = pathPoint(.43f + random(108 + i * 8) * .1f, branchSide);
+                    mesh.line(middleA, branch, width * .65f, crack);
+                }
+            }
+
+            if (critical > tuning::smokeAppearanceThreshold) {
+                Vec2 center = shifted(b.center);
+                for (int i = 0; i < 3; ++i) {
+                    float phase = std::fmod(b.effectTime * (.35f + i * .04f) + b.id * .17f +
+                                                i * .31f,
+                                            1.0f);
+                    float side = sinf(b.id * 4.3f + i * 2.7f) * (.18f + phase * .12f);
+                    Color smoke{.22f, .23f, .25f, critical * (1.0f - phase) * .32f};
+                    mesh.circle({center.x + side, center.y + .3f + phase * .85f},
+                                .08f + phase * .18f, smoke);
+                }
+            }
         }
         mesh.upload();
     }
@@ -311,7 +449,7 @@ class ImpactPass final : public DrawPass {
         for (auto &r : frame.ripples) {
             float size = (.12f + r.age * (1.5f + r.strength * .12f)) * sizeScale;
             Color color = r.color;
-            color.a = (1 - r.age / .6f) * .8f;
+            color.a = (1 - r.age / tuning::impactLifetimeSeconds) * tuning::impactBaseOpacity;
             float cs = cosf(r.rotation), sn = sinf(r.rotation);
             Vec2 corners[] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
             for (int i : {0, 1, 2, 0, 2, 3}) {

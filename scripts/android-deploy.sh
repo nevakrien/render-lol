@@ -42,21 +42,28 @@ EOF
 BUILD_ONLY=false
 NO_WATCH=false
 SKIP_BUILD=false
-BUILD_TYPE="Debug"
+BUILD_TYPE="debug"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --build-only)  BUILD_ONLY=true; shift ;;
         --no-watch)    NO_WATCH=true; shift ;;
         --skip-build)  SKIP_BUILD=true; shift ;;
-        --release)     BUILD_TYPE="Release"; shift ;;
+        --release)     BUILD_TYPE="release"; shift ;;
         -h|--help)     usage ;;
         *) err "Unknown option: $1"; usage ;;
     esac
 done
 
+if [[ "$BUILD_TYPE" == "release" ]]; then
+    GRADLE_TASK="assembleRelease"
+else
+    GRADLE_TASK="assembleDebug"
+fi
+APK="$ANDROID_DIR/app/build/outputs/apk/$BUILD_TYPE/app-$BUILD_TYPE.apk"
+
 # Preflight checks
-if ! command -v adb &>/dev/null; then
+if [[ "$BUILD_ONLY" == false ]] && ! command -v adb &>/dev/null; then
     err "adb not found. Install Android SDK platform-tools."
     exit 1
 fi
@@ -70,12 +77,15 @@ fi
 if [[ "$SKIP_BUILD" == false ]]; then
     log "Building $BUILD_TYPE APK..."
     ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}" \
-        "$ANDROID_DIR/gradlew" -p "$ANDROID_DIR" assembleDebug
-    APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
-    if [[ ! -f "$APK" ]]; then
-        err "APK not found at $APK"
-        exit 1
-    fi
+        "$ANDROID_DIR/gradlew" -p "$ANDROID_DIR" "$GRADLE_TASK"
+fi
+
+if [[ ! -f "$APK" ]]; then
+    err "APK not found at $APK"
+    exit 1
+fi
+
+if [[ "$SKIP_BUILD" == false ]]; then
     log "APK built: $APK"
 fi
 
@@ -99,14 +109,17 @@ ADB="adb -s $DEVICE_SERIAL"
 log "Device: $DEVICE_SERIAL"
 
 # Install and launch
-if [[ "$SKIP_BUILD" == false ]]; then
-    log "Installing APK..."
-    $ADB install -r "$APK"
-fi
+log "Installing APK..."
+$ADB install -r "$APK"
 
 log "Launching $PACKAGE..."
 $ADB shell am start -n "$PACKAGE/org.libsdl.app.SDLActivity" 2>/dev/null || \
     $ADB shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
+
+if [[ "$BUILD_TYPE" == "release" ]]; then
+    log "Release build installed. Shader hot-reload is disabled."
+    exit 0
+fi
 
 # Push shaders
 push_shaders() {

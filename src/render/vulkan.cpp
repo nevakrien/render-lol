@@ -380,6 +380,13 @@ bool checkShaderReloads(const std::string &dir) {
 }
 } // namespace
 bool Vulkan::draw(const RenderFrame &frame, const std::string &capture) {
+#ifdef __ANDROID__
+    int windowWidth = 0, windowHeight = 0;
+    SDL_GetWindowSizeInPixels(window_, &windowWidth, &windowHeight);
+    if (!dirty_ && windowWidth > 0 && windowHeight > 0 &&
+        (windowWidth > windowHeight) != (extent_.width > extent_.height))
+        dirty_ = true;
+#endif
     if (dirty_ && !rebuild())
         return false;
     if (checkShaderReloads(shaderDir_)) {

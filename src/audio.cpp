@@ -26,6 +26,10 @@ void Audio::toggleMute() {
     muted_ = !muted_;
     mixer_.clear();
 }
+void Audio::setVolume(float volume) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    volume_ = std::clamp(volume, 0.0f, 2.0f);
+}
 void Audio::play(const std::vector<Impact> &impacts) {
     if (!stream_ || impacts.empty())
         return;
@@ -33,7 +37,7 @@ void Audio::play(const std::vector<Impact> &impacts) {
     if (muted_)
         return;
     for (auto &hit : impacts)
-        mixer_.trigger(220 + float(hit.b % 7) * 55, std::min(.15f, hit.strength * .02f));
+        mixer_.trigger(220 + float(hit.b % 7) * 55, .12f + hit.strength * .38f);
 }
 void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional, int) {
     auto &self = *static_cast<Audio *>(userdata);
@@ -44,6 +48,8 @@ void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional
         {
             std::lock_guard<std::mutex> lock(self.mutex_);
             self.mixer_.render(samples.data(), size_t(count));
+            for (int i = 0; i < count; ++i)
+                samples[i] = std::clamp(samples[i] * self.volume_, -1.0f, 1.0f);
         }
         if (!SDL_PutAudioStreamData(stream, samples.data(), count * int(sizeof(float))))
             return;

@@ -31,6 +31,10 @@ struct RenderFrame {
     std::vector<Ripple> ripples;
     bool wireframe = false;
     uint64_t score = 0;
+    int menuScreen = 0;
+    float volume = 1.0f;
+    bool muted = false;
+    int explosionSize = 2;
 };
 class Vulkan;
 // Each experiment owns its shaders, pipeline, buffers and draw commands.

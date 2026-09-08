@@ -70,18 +70,28 @@ fly, so editing a `.glsl` file and recompiling to `.spv` hot-reloads instantly.
 | Input | Action |
 | --- | --- |
 | Left mouse / touch and drag | Grab, pull and release a body |
+| Pause button | Open the pause menu |
+| Pause menu | Resume, open settings, reset, or quit |
+| Settings buttons | Change volume, mute audio, or select explosion size |
+
+Volume, mute, and collision-effect size are saved in `settings.ini` beside the executable
+(in internal app storage on Android). The default volume is 50%, with the previous output
+level at 50% and up to 2x gain available at 100%. `Big` is the default effect size.
+
+Desktop debug shortcuts:
+
+| Input | Action |
+| --- | --- |
 | Space | Pause/resume |
 | G | Toggle gravity (off initially) |
 | R | Reset the six starting bodies and score |
 | 1 / 2 / 3 | Spawn a circle / triangle / rectangle in a free area |
-| S | Toggle whether new bodies are rigid or soft (see window title) |
-| W | Show soft-body mesh spokes |
 | M | Mute/unmute |
-| Escape | Quit |
+| Escape | Open/back/close the pause menu |
 
-A filled center marker indicates a rigid body; a hollow marker indicates a
-soft body. Spawning is capped at 24 bodies and needs enough empty space.
-Automatic spawning/despawning and a menu are not implemented in this sketch.
+A filled center marker indicates a rigid body. Debug spawning is capped at 24
+bodies and needs enough empty space. Automatic spawning/despawning is not
+implemented in this sketch.
 
 ### Experiments
 

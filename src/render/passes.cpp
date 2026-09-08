@@ -1,5 +1,6 @@
 #include "passes.hpp"
 #include "shaders.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -283,8 +284,6 @@ class BodyPass final : public DrawPass {
             Color edge{b.color.r * .6f, b.color.g * .6f, b.color.b * .6f, 1};
             for (size_t i = 0; i < b.outline.size(); ++i)
                 mesh.line(b.outline[i], b.outline[(i + 1) % b.outline.size()], .028f, edge);
-            // Filled marker for each rigid body. Shapes stay flat colored.
-            mesh.rect(b.center.x - .045f, b.center.y - .045f, .09f, .09f, edge);
         }
         mesh.upload();
     }
@@ -307,8 +306,10 @@ class ImpactPass final : public DrawPass {
     }
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
+        constexpr float multipliers[] = {1, 2, 3, 10};
+        float sizeScale = multipliers[std::clamp(frame.explosionSize, 0, 3)] / 3.0f;
         for (auto &r : frame.ripples) {
-            float size = .12f + r.age * (1.5f + r.strength * .12f);
+            float size = (.12f + r.age * (1.5f + r.strength * .12f)) * sizeScale;
             Color color = r.color;
             color.a = (1 - r.age / .6f) * .8f;
             float cs = cosf(r.rotation), sn = sinf(r.rotation);
@@ -345,8 +346,11 @@ class ExplosionPass final : public DrawPass {
           mesh(vk) {}
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
+        constexpr float multipliers[] = {1, 2, 3, 10};
+        float multiplier = multipliers[std::clamp(frame.explosionSize, 0, 3)];
         for (auto &r : frame.ripples) {
-            float size = .45f + r.strength * .8f;
+            float scaledStrength = multiplier * r.strength * 100.0f;
+            float size = .09f * (5.0f + .14f * scaledStrength);
             Vec2 corners[] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
             for (int i : {0, 1, 2, 0, 2, 3})
                 mesh.vertices.push_back({{r.point.x + corners[i].x * size,
@@ -356,7 +360,7 @@ class ExplosionPass final : public DrawPass {
                                          0,
                                          r.age,
                                          r.seed,
-                                         r.strength});
+                                         r.strength * multiplier});
         }
         mesh.upload();
     }
@@ -411,13 +415,48 @@ class HudPass final : public DrawPass {
                    sizeof(shaders::body_frag) / sizeof(uint32_t), true), mesh(vk) {}
     void prepare(const RenderFrame &frame) override {
         mesh.vertices.clear();
-        text("RENDER LOL", -8, 5.14f, .047f, {.85f, .91f, 1});
-        text("BOX2D", -2.5f, 5.07f, .024f, {.45f, .56f, .68f});
+        if (frame.menuScreen != 0) {
+            mesh.rect(-8, -4.5f, 16, 9, {.025f, .032f, .05f, .94f});
+            mesh.rect(-3.5f, -2.55f, 7, 5.1f, {.075f, .095f, .14f, .98f});
+            Color button{.12f, .16f, .23f, 1};
+            Color label{.86f, .91f, 1};
+            if (frame.menuScreen == 1) {
+                text("PAUSED", -1.35f, 1.95f, .075f, label);
+                for (float y : {.65f, -.25f, -1.15f, -2.05f})
+                    mesh.rect(-2.5f, y, 5, .7f, button);
+                text("RESUME", -.92f, 1.16f, .05f, label);
+                text("SETTINGS", -1.25f, .26f, .05f, label);
+                text("RESET", -.75f, -.64f, .05f, label);
+                text("QUIT", -.55f, -1.54f, .05f, {1, .58f, .48f});
+            } else {
+                text("SETTINGS", -1.65f, 1.95f, .075f, label);
+                text("VOLUME " + std::to_string(int(std::round(frame.volume * 50))), -1.35f,
+                     1.31f, .045f, label);
+                mesh.rect(-2.5f, .75f, 1, .7f, button);
+                mesh.rect(1.5f, .75f, 1, .7f, button);
+                text("-", -2.18f, 1.27f, .065f, label);
+                text("+", 1.79f, 1.27f, .065f, label);
+
+                constexpr const char *sizes[] = {"SMALL", "MEDIUM", "BIG", "ABSURD"};
+                text(std::string("EXPLOSION ") + sizes[std::clamp(frame.explosionSize, 0, 3)],
+                     -1.7f, .36f, .04f, {1, .78f, .25f});
+                mesh.rect(-2.5f, -.2f, 1, .7f, button);
+                mesh.rect(1.5f, -.2f, 1, .7f, button);
+                text("-", -2.18f, .32f, .065f, label);
+                text("+", 1.79f, .32f, .065f, label);
+
+                mesh.rect(-2.5f, -1.15f, 5, .7f, button);
+                text(std::string("SOUND ") + (frame.muted ? "OFF" : "ON"), -.98f, -.63f,
+                     .05f, label);
+                mesh.rect(-2.5f, -2.1f, 5, .7f, button);
+                text("BACK", -.55f, -1.58f, .05f, label);
+            }
+            mesh.upload();
+            return;
+        }
         text("SCORE " + std::to_string(frame.score), 4.6f, 5.1f, .035f, {.85f, .91f, 1});
-        text("DRAG TO THROW / SPACE PAUSE / G GRAVITY / R RESET", -8, -4.84f, .026f,
-             {.61f, .69f, .78f});
-        text("1 CIRCLE  2 TRIANGLE  3 RECTANGLE / W MESH / M MUTE", -8, -5.17f,
-             .023f, {.41f, .5f, .62f});
+        mesh.rect(-8.0f, 4.65f, 2.15f, .7f, {.1f, .14f, .21f, .92f});
+        text("PAUSE", -7.72f, 5.16f, .05f, {.86f, .91f, 1});
         mesh.upload();
     }
     void record(VkCommandBuffer c) override {

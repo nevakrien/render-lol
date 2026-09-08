@@ -26,7 +26,7 @@ void main() {
     float dist = length(uv - vec2(0.5));
     float random = hashNoise(uv, t, effectData.y);
     float random2 = mod(17.0 * random, 1.0);
-    float strength = effectData.z * 200.0;
+    float strength = effectData.z * 100.0;
     float power = 1.0 - exp(-strength / 100.0);
     float phase = sin(PI * t);
     float alpha = smoothstep(0.4 * phase, 0.0, dist);

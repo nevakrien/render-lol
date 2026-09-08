@@ -5,6 +5,7 @@
 #include <SDL3/SDL_main.h>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -12,6 +13,56 @@
 #ifdef __ANDROID__
 #include <sys/stat.h>
 #endif
+
+namespace {
+struct AppSettings {
+    float volume = 1.0f;
+    bool muted = false;
+    int explosionSize = 2;
+};
+
+std::string settingsPath() {
+#ifdef __ANDROID__
+    if (const char *path = SDL_GetAndroidInternalStoragePath())
+        return std::string(path) + "/settings.ini";
+#endif
+    if (const char *path = SDL_GetBasePath())
+        return std::string(path) + "settings.ini";
+    return "settings.ini";
+}
+
+AppSettings loadSettings(const std::string &path) {
+    AppSettings settings;
+    std::ifstream input(path);
+    std::string key;
+    while (input >> key) {
+        if (key == "volume")
+            input >> settings.volume;
+        else if (key == "muted")
+            input >> settings.muted;
+        else if (key == "explosion_size")
+            input >> settings.explosionSize;
+        else {
+            std::string ignored;
+            std::getline(input, ignored);
+        }
+    }
+    settings.volume = std::clamp(settings.volume, 0.0f, 2.0f);
+    settings.explosionSize = std::clamp(settings.explosionSize, 0, 3);
+    return settings;
+}
+
+void saveSettings(const std::string &path, const AppSettings &settings) {
+    std::ofstream output(path, std::ios::trunc);
+    if (!output) {
+        SDL_Log("Could not save settings to %s", path.c_str());
+        return;
+    }
+    output << "volume " << settings.volume << '\n'
+           << "muted " << settings.muted << '\n'
+           << "explosion_size " << settings.explosionSize << '\n';
+}
+} // namespace
 
 int main(int argc, char **argv) {
     bool validation = false, smoke = false;
@@ -89,7 +140,15 @@ int main(int argc, char **argv) {
         toy::Physics physics;
         toy::Audio audio;
         toy::RenderFrame frame;
+        const std::string configPath = settingsPath();
+        AppSettings settings = loadSettings(configPath);
+        audio.setVolume(settings.volume);
+        if (settings.muted)
+            audio.toggleMute();
+        saveSettings(configPath, settings);
         bool running = true, paused = false, gravity = false, background = false;
+        int menuScreen = 0; // 0: game, 1: pause, 2: settings
+        int explosionSize = settings.explosionSize;
         SDL_FingerID finger = 0;
         bool touchActive = false;
         toy::Vec2 pointer{};
@@ -103,11 +162,67 @@ int main(int argc, char **argv) {
             return toy::screenToWorld(x, y, w, h);
         };
         auto title = [&]() {
-            std::string text = "render-lol | " + std::string(paused ? "PAUSED" : "playing") +
+            std::string text = "render-lol | " +
+                               std::string(paused || menuScreen ? "PAUSED" : "playing") +
                                " | gravity " +
-                               (gravity ? "on" : "off") + " | audio " +
-                               (audio.muted() ? "off" : "on");
+                                (gravity ? "on" : "off") + " | audio " +
+                                (audio.muted() ? "off" : "on") + " | volume " +
+                                std::to_string(int(audio.volume() * 50)) + "%";
             SDL_SetWindowTitle(window.get(), text.c_str());
+        };
+        auto inside = [](toy::Vec2 p, float x, float y, float w, float h) {
+            return p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h;
+        };
+        auto handleUi = [&](toy::Vec2 p) {
+            bool settingsChanged = false;
+            if (menuScreen == 0) {
+                if (!inside(p, -8.0f, 4.65f, 2.15f, .7f))
+                    return false;
+                menuScreen = 1;
+                physics.endDrag();
+            } else if (menuScreen == 1) {
+                if (inside(p, -2.5f, .65f, 5, .7f)) {
+                    menuScreen = 0;
+                    paused = false;
+                } else if (inside(p, -2.5f, -.25f, 5, .7f))
+                    menuScreen = 2;
+                else if (inside(p, -2.5f, -1.15f, 5, .7f)) {
+                    physics.reset();
+                    gravity = false;
+                    paused = false;
+                    frame.ripples.clear();
+                    menuScreen = 0;
+                } else if (inside(p, -2.5f, -2.05f, 5, .7f))
+                    running = false;
+                else
+                    return false;
+            } else {
+                if (inside(p, -2.5f, .75f, 1.0f, .7f)) {
+                    audio.setVolume(audio.volume() - .2f);
+                    settingsChanged = true;
+                } else if (inside(p, 1.5f, .75f, 1.0f, .7f)) {
+                    audio.setVolume(audio.volume() + .2f);
+                    settingsChanged = true;
+                } else if (inside(p, -2.5f, -.2f, 1.0f, .7f)) {
+                    explosionSize = std::max(0, explosionSize - 1);
+                    settingsChanged = true;
+                } else if (inside(p, 1.5f, -.2f, 1.0f, .7f)) {
+                    explosionSize = std::min(3, explosionSize + 1);
+                    settingsChanged = true;
+                } else if (inside(p, -2.5f, -1.15f, 5, .7f)) {
+                    audio.toggleMute();
+                    settingsChanged = true;
+                } else if (inside(p, -2.5f, -2.1f, 5, .7f))
+                    menuScreen = 1;
+                else
+                    return false;
+            }
+            if (settingsChanged) {
+                settings = {audio.volume(), audio.muted(), explosionSize};
+                saveSettings(configPath, settings);
+            }
+            title();
+            return true;
         };
         title();
         while (running && (!frameLimit || frames < frameLimit)) {
@@ -134,10 +249,11 @@ int main(int argc, char **argv) {
                     if (!touchActive)
                         physics.moveDrag(pointer);
                 } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-                           e.button.which != SDL_TOUCH_MOUSEID &&
-                           e.button.button == SDL_BUTTON_LEFT && !touchActive) {
+                            e.button.which != SDL_TOUCH_MOUSEID &&
+                            e.button.button == SDL_BUTTON_LEFT && !touchActive) {
                     pointer = map(e.button.x, e.button.y);
-                    physics.beginDrag(pointer);
+                    if (!handleUi(pointer) && menuScreen == 0)
+                        physics.beginDrag(pointer);
                 } else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP &&
                            e.button.which != SDL_TOUCH_MOUSEID &&
                            e.button.button == SDL_BUTTON_LEFT && !touchActive)
@@ -146,6 +262,10 @@ int main(int argc, char **argv) {
                     int w, h;
                     SDL_GetWindowSize(window.get(), &w, &h);
                     pointer = map(e.tfinger.x * w, e.tfinger.y * h);
+                    if (handleUi(pointer))
+                        continue;
+                    if (menuScreen != 0)
+                        continue;
                     touchActive = true;
                     finger = e.tfinger.fingerID;
                     physics.beginDrag(pointer);
@@ -160,10 +280,15 @@ int main(int argc, char **argv) {
                     physics.endDrag();
                     touchActive = false;
                 } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                    if (e.key.key == SDLK_ESCAPE) {
+                        menuScreen = menuScreen == 2 ? 1 : (menuScreen == 1 ? 0 : 1);
+                        physics.endDrag();
+                        title();
+                        continue;
+                    }
+                    if (menuScreen != 0)
+                        continue;
                     switch (e.key.key) {
-                    case SDLK_ESCAPE:
-                        running = false;
-                        break;
                     case SDLK_SPACE:
                         paused = !paused;
                         break;
@@ -181,6 +306,8 @@ int main(int argc, char **argv) {
                         break;
                     case SDLK_M:
                         audio.toggleMute();
+                        settings.muted = audio.muted();
+                        saveSettings(configPath, settings);
                         break;
                     case SDLK_1:
                     case SDLK_2:
@@ -247,7 +374,7 @@ int main(int argc, char **argv) {
                 if (frames == 180)
                     SDL_SetWindowSize(window.get(), 1152, 704);
             }
-            if (!paused) {
+            if (!paused && menuScreen == 0) {
                 accumulator += dt;
                 while (accumulator >= toy::Physics::stepSize) {
                     physics.step();
@@ -269,6 +396,10 @@ int main(int argc, char **argv) {
                 accumulator = 0;
             frame.bodies = physics.snapshot();
             frame.score = physics.score();
+            frame.menuScreen = menuScreen;
+            frame.volume = audio.volume();
+            frame.muted = audio.muted();
+            frame.explosionSize = explosionSize;
             bool captureNow = !capture.empty() && ((frameLimit && frames == frameLimit - 1) ||
                                                    (!frameLimit && frames == 0));
             if (renderer.draw(frame, captureNow ? capture : "")) {

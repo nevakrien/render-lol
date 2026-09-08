@@ -25,6 +25,7 @@ struct Impact {
     int a, b;
     float shapeId = 0;
     float rotation = 0;
+    float seed = 0;
 };
 struct PhysicsStats {
     int rigidContacts = 0;

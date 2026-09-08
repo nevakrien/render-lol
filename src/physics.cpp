@@ -39,21 +39,18 @@ struct Physics::Impl {
     std::vector<Object> objects;
     std::vector<Object> walls;
     std::map<int, int> bodyToObject; // bodyId.index1 -> object id
-    std::map<std::pair<int, int>, float> lastImpact;
     std::vector<Impact> impacts;
     PhysicsStats counters;
     int nextId = 1;
     int dragObjectId = 0;
     Vec2 target{};
-    Vec2 localGrab{};
     float time = 0;
     uint64_t points = 0;
     bool gravity = false;
 
     Impl() {
         b2WorldDef def = b2DefaultWorldDef();
-        def.enableSleep = false;
-        def.hitEventThreshold = 2.0f;
+        def.hitEventThreshold = 0.0f;
         world = b2CreateWorld(&def);
     }
 
@@ -169,7 +166,7 @@ struct Physics::Impl {
 
         b2ShapeDef shapeDef = b2DefaultShapeDef();
         shapeDef.friction = 0.2f;
-        shapeDef.restitution = 0.85f;
+        shapeDef.restitution = 0.0f;
         shapeDef.enableHitEvents = true;
         b2Polygon box = b2MakeBox(size.x * 0.5f, size.y * 0.5f);
         b2ShapeId sid = b2CreatePolygonShape(bid, &shapeDef, &box);
@@ -188,13 +185,11 @@ struct Physics::Impl {
         if (b2World_IsValid(world))
             b2DestroyWorld(world);
         b2WorldDef def = b2DefaultWorldDef();
-        def.enableSleep = false;
-        def.hitEventThreshold = 2.0f;
+        def.hitEventThreshold = 0.0f;
         world = b2CreateWorld(&def);
         objects.clear();
         walls.clear();
         bodyToObject.clear();
-        lastImpact.clear();
         impacts.clear();
         counters = {};
         nextId = 1;
@@ -231,10 +226,10 @@ int Physics::spawn(Shape shape, Vec2 position, Vec2 velocity) {
     bodyDef.type = b2_dynamicBody;
     bodyDef.position = {position.x, position.y};
     bodyDef.linearDamping = 0.0f;
-    bodyDef.angularDamping = 0.2f;
+    bodyDef.angularDamping = 0.0f;
     bodyDef.gravityScale = 1.0f;
-    bodyDef.enableSleep = false;
     bodyDef.isAwake = true;
+    bodyDef.isBullet = true;
     bodyDef.linearVelocity = {velocity.x, velocity.y};
 
     Object obj;
@@ -246,7 +241,7 @@ int Physics::spawn(Shape shape, Vec2 position, Vec2 velocity) {
 
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.friction = 0.2f;
-    shapeDef.restitution = 0.85f;
+    shapeDef.restitution = shape == Shape::Circle ? 0.93f : 0.8f;
     shapeDef.density = 1.0f;
     shapeDef.enableHitEvents = true;
 
@@ -286,11 +281,8 @@ bool Physics::beginDrag(Vec2 point) {
         if (!contains(outline, point))
             continue;
         impl->dragObjectId = it->id;
-        Vec2 center = impl->bodyPosition(it->bodyId);
-        float angle = impl->bodyRotation(it->bodyId);
-        Vec2 offset{point.x - center.x, point.y - center.y};
-        impl->localGrab = {offset.x * cosf(angle) + offset.y * sinf(angle),
-                           -offset.x * sinf(angle) + offset.y * cosf(angle)};
+        impl->target = point;
+        b2Body_SetLinearDamping(it->bodyId, 100.0f);
         return true;
     }
     return false;
@@ -300,7 +292,11 @@ void Physics::moveDrag(Vec2 point) {
     impl->target = {std::clamp(point.x, -7.8f, 7.8f), std::clamp(point.y, -4.3f, 4.3f)};
 }
 
-void Physics::endDrag() { impl->dragObjectId = 0; }
+void Physics::endDrag() {
+    if (auto *object = impl->find(impl->dragObjectId))
+        b2Body_SetLinearDamping(object->bodyId, 0.0f);
+    impl->dragObjectId = 0;
+}
 bool Physics::dragging() const { return impl->dragObjectId != 0; }
 
 void Physics::step() {
@@ -308,17 +304,10 @@ void Physics::step() {
     state.time += stepSize;
 
     if (auto *object = state.find(state.dragObjectId)) {
-        float angle = state.bodyRotation(object->bodyId);
-        Vec2 arm{state.localGrab.x * cosf(angle) - state.localGrab.y * sinf(angle),
-                 state.localGrab.x * sinf(angle) + state.localGrab.y * cosf(angle)};
         b2Vec2 bodyPos = b2Body_GetPosition(object->bodyId);
-        b2Vec2 grab = {bodyPos.x + arm.x, bodyPos.y + arm.y};
-        b2Vec2 tgt = {state.target.x, state.target.y};
-        b2Vec2 delta = {tgt.x - grab.x, tgt.y - grab.y};
-        b2Vec2 vel = b2Body_GetLinearVelocity(object->bodyId);
-        b2Vec2 force = {delta.x * 200.0f - vel.x * 25.0f, delta.y * 200.0f - vel.y * 25.0f};
-        b2Body_ApplyForce(object->bodyId, force, b2Body_GetWorldCenterOfMass(object->bodyId),
-                          true);
+        b2Vec2 delta = {state.target.x - bodyPos.x, state.target.y - bodyPos.y};
+        float scale = stepSize * 700.0f * (b2Body_GetMass(object->bodyId) + 0.7f);
+        b2Body_ApplyLinearImpulseToCenter(object->bodyId, {delta.x * scale, delta.y * scale}, true);
     }
 
     b2World_Step(state.world, stepSize, 4);
@@ -338,8 +327,7 @@ void Physics::step() {
         float strength = hit.approachSpeed / 8.0f;
         strength = std::clamp(strength, 0.0f, 1.0f);
 
-        if (strength > .65f &&
-            (!state.lastImpact.count(key) || state.time - state.lastImpact[key] > .12f)) {
+        {
             const Object *owner = nullptr;
             for (auto &obj : state.objects)
                 if (obj.id == key.first || obj.id == key.second) {
@@ -348,10 +336,12 @@ void Physics::step() {
                 }
             state.impacts.push_back(
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
-                 key.first, key.second, owner ? float(owner->shape) : 0.0f,
-                 owner ? state.bodyRotation(owner->bodyId) : 0.0f});
-            state.points += uint64_t(strength * 10);
-            state.lastImpact[key] = state.time;
+                  key.first, key.second, owner ? float(owner->shape) : 0.0f,
+                  owner ? state.bodyRotation(owner->bodyId) : 0.0f,
+                  std::fmod(std::abs(std::sin(state.time * 91.7f + hit.point.x * 17.3f +
+                                             hit.point.y * 37.1f)),
+                            1.0f)});
+            state.points += 1 + uint64_t(strength * 10);
         }
         ++state.counters.rigidContacts;
     }

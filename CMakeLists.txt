@@ -48,7 +48,7 @@ endif()
 # hot-reload dir the app watches AND the source the Python embed script uses for
 # the in-binary fallback. Build (e.g. Sublime Ctrl+B) therefore produces the .spv.
 set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
-set(SHADERS background.vert background.frag mesh.vert body.frag effect.frag)
+set(SHADERS background.vert background.frag mesh.vert body.frag effect.frag explosion.frag)
 foreach(SHADER IN LISTS SHADERS)
   set(OUTPUT "${SHADER_DIR}/${SHADER}.spv")
   add_custom_command(OUTPUT "${OUTPUT}"

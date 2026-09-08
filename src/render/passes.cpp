@@ -103,13 +103,16 @@ class Pipeline {
                 {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, position)},
                 {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, color)},
                 {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
-                {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, shapeId)}};
+                {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, shapeId)},
+                {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectAge)},
+                {5, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectSeed)},
+                {6, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectStrength)}};
             VkPipelineVertexInputStateCreateInfo vertex{};
             vertex.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
             if (mesh_) {
                 vertex.vertexBindingDescriptionCount = 1;
                 vertex.pVertexBindingDescriptions = &binding;
-                vertex.vertexAttributeDescriptionCount = 4;
+                vertex.vertexAttributeDescriptionCount = 7;
                 vertex.pVertexAttributeDescriptions = attributes;
             }
             VkPipelineInputAssemblyStateCreateInfo assembly{};
@@ -316,8 +319,44 @@ class ImpactPass final : public DrawPass {
                     {{r.point.x + lx * cs - ly * sn, r.point.y + lx * sn + ly * cs},
                      color,
                      corners[i],
-                     r.shapeId});
+                     r.shapeId,
+                     r.age,
+                     r.seed,
+                     r.strength});
             }
+        }
+        mesh.upload();
+    }
+    void record(VkCommandBuffer c) override {
+        pipeline.bind(c);
+        mesh.draw(c);
+    }
+    void reloadShaders() override { pipeline.rebuild(); }
+};
+class ExplosionPass final : public DrawPass {
+    Pipeline pipeline;
+    Mesh mesh;
+
+  public:
+    explicit ExplosionPass(Vulkan &vk)
+        : pipeline(vk, "mesh.vert", "explosion.frag", shaders::mesh_vert,
+                   sizeof(shaders::mesh_vert) / sizeof(uint32_t), shaders::explosion_frag,
+                   sizeof(shaders::explosion_frag) / sizeof(uint32_t), true),
+          mesh(vk) {}
+    void prepare(const RenderFrame &frame) override {
+        mesh.vertices.clear();
+        for (auto &r : frame.ripples) {
+            float size = .45f + r.strength * .8f;
+            Vec2 corners[] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+            for (int i : {0, 1, 2, 0, 2, 3})
+                mesh.vertices.push_back({{r.point.x + corners[i].x * size,
+                                          r.point.y + corners[i].y * size},
+                                         {},
+                                         corners[i],
+                                         0,
+                                         r.age,
+                                         r.seed,
+                                         r.strength});
         }
         mesh.upload();
     }
@@ -391,6 +430,7 @@ class HudPass final : public DrawPass {
 void installPasses(Vulkan &vk) {
     vk.addPass(std::make_unique<BackgroundPass>(vk));
     vk.addPass(std::make_unique<BodyPass>(vk));
+    vk.addPass(std::make_unique<ExplosionPass>(vk));
     vk.addPass(std::make_unique<ImpactPass>(vk));
     vk.addPass(std::make_unique<HudPass>(vk));
 }

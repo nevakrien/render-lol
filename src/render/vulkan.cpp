@@ -8,6 +8,9 @@
 #include <limits>
 #include <stdexcept>
 #include <sys/stat.h>
+#ifdef __ANDROID__
+#include <dirent.h>
+#endif
 #include <unordered_map>
 
 namespace toy {
@@ -245,7 +248,7 @@ bool Vulkan::rebuild() {
     ci.imageUsage =
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (canCapture_ ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ci.preTransform = caps.currentTransform;
+    ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     for (auto alpha :
          {VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
           VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR})
@@ -328,11 +331,38 @@ std::unordered_map<std::string, time_t> &shaderTimestamps() {
     return ts;
 }
 bool checkShaderReloads(const std::string &dir) {
-    namespace fs = std::filesystem;
-    if (dir.empty() || !fs::exists(dir))
+    if (dir.empty())
         return false;
     bool changed = false;
-    for (auto &entry : fs::directory_iterator(dir)) {
+#ifdef __ANDROID__
+    DIR *d = opendir(dir.c_str());
+    if (!d)
+        return false;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != nullptr) {
+        std::string name(ent->d_name);
+        if (name.size() < 4 || name.substr(name.size() - 4) != ".spv")
+            continue;
+        std::string path = dir + "/" + name;
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0)
+            continue;
+        auto &ts = shaderTimestamps();
+        auto prev = ts.find(path);
+        if (prev == ts.end() || prev->second != st.st_mtime) {
+            ts[path] = st.st_mtime;
+            changed = true;
+        }
+    }
+    closedir(d);
+#else
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || ec)
+        return false;
+    for (auto &entry : fs::directory_iterator(dir, ec)) {
+        if (ec)
+            break;
         if (entry.path().extension() != ".spv")
             continue;
         struct stat st;
@@ -345,6 +375,7 @@ bool checkShaderReloads(const std::string &dir) {
             changed = true;
         }
     }
+#endif
     return changed;
 }
 } // namespace

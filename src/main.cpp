@@ -9,6 +9,9 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#ifdef __ANDROID__
+#include <sys/stat.h>
+#endif
 
 int main(int argc, char **argv) {
     bool validation = false, smoke = false;
@@ -41,23 +44,46 @@ int main(int argc, char **argv) {
             return arg == "--help" ? 0 : 1;
         }
     }
+#ifdef __ANDROID__
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "Landscape");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("SDL: %s", SDL_GetError());
         return 1;
     }
     int result = 0;
     try {
+        int winW = 1152, winH = 704;
+#ifdef __ANDROID__
+        SDL_Rect bounds;
+        if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &bounds)) {
+            winW = bounds.w;
+            winH = bounds.h;
+        }
+#endif
         auto window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>(
-            SDL_CreateWindow("render-lol", 1152, 704,
+            SDL_CreateWindow("render-lol", winW, winH,
                              SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE |
                                  SDL_WINDOW_HIGH_PIXEL_DENSITY),
             SDL_DestroyWindow);
         if (!window)
             throw std::runtime_error(SDL_GetError());
+#ifdef __ANDROID__
+        SDL_SetWindowFullscreen(window.get(), true);
+#endif
 #ifndef RUNTIME_SHADER_DIR
 #define RUNTIME_SHADER_DIR ""
 #endif
         std::string shaders = shaderDir.empty() ? RUNTIME_SHADER_DIR : shaderDir;
+#ifdef __ANDROID__
+        if (shaders.empty()) {
+            const char *internal = SDL_GetAndroidInternalStoragePath();
+            if (internal) {
+                shaders = std::string(internal) + "/shaders";
+                mkdir(shaders.c_str(), 0755);
+            }
+        }
+#endif
         toy::Vulkan renderer(window.get(), validation, shaders);
         toy::installPasses(renderer);
         toy::Physics physics;

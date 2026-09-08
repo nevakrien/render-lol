@@ -31,8 +31,19 @@ target_include_directories(sound-mixer PUBLIC src)
 target_include_directories(playground PUBLIC src)
 target_link_libraries(playground PUBLIC box2d)
 
+# During Android cross-compilation the NDK toolchain restricts find_package to the
+# sysroot.  Vulkan is a standard Android system library and is found there normally.
+# Host build tools (glslangValidator, Python) need the search path un-restricted.
 find_package(Vulkan REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED NO_CMAKE_FIND_ROOT_PATH)
+if(ANDROID)
+  set(_saved_root_mode ${CMAKE_FIND_ROOT_PATH_MODE_PACKAGE})
+  set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE NEVER)
+endif()
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+if(ANDROID)
+  set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ${_saved_root_mode})
+endif()
 # Compile GLSL directly into the source shaders/ dir. This is both the runtime
 # hot-reload dir the app watches AND the source the Python embed script uses for
 # the in-binary fallback. Build (e.g. Sublime Ctrl+B) therefore produces the .spv.
@@ -48,7 +59,6 @@ endforeach()
 
 # Embed the .spv bytes as an in-binary fallback so the app still runs even when
 # the shaders/ dir is empty or unreachable.
-find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 set(SHADER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders.hpp")
 add_custom_command(OUTPUT "${SHADER_HEADER}"
   COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_shaders.py" "${SHADER_HEADER}" ${SPIRV_FILES}

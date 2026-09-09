@@ -195,12 +195,17 @@ int main(int argc, char **argv) {
             return toy::screenToWorld(x, y, w, h);
         };
         auto title = [&]() {
+            auto voices = audio.voiceStats();
             std::string text = "render-lol | " +
                                std::string(paused || menuScreen ? "PAUSED" : "playing") +
                                " | gravity " +
                                 (gravity ? "on" : "off") + " | audio " +
-                                (audio.muted() ? "off" : "on") + " | volume " +
-                                std::to_string(int(audio.volume() * 50)) + "%";
+                                 (audio.muted() ? "off" : "on") + " | volume " +
+                                 std::to_string(int(audio.volume() * 50)) + "% | voices " +
+                                 std::to_string(voices.active) + "/" +
+                                 std::to_string(voices.peak) + "/" +
+                                 std::to_string(toy::tuning::maximumSimultaneousImpactVoices) +
+                                 " | replaced " + std::to_string(voices.replaced);
             SDL_SetWindowTitle(window.get(), text.c_str());
         };
         auto inside = [](toy::Vec2 p, float x, float y, float w, float h) {
@@ -467,6 +472,8 @@ int main(int argc, char **argv) {
                                                    (!frameLimit && frames == 0));
             if (renderer.draw(frame, captureNow ? capture : "")) {
                 ++frames;
+                if (frames % 15 == 0)
+                    title();
                 if (captureNow)
                     capture.clear();
             }

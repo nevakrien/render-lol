@@ -12,9 +12,18 @@ Audio::Audio() {
     }
     SDL_AudioSpec spec{SDL_AUDIO_F32, 1, SoundMixer::sampleRate};
     stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, this);
-    if (stream_)
+    if (stream_) {
+        SDL_AudioSpec source{}, device{};
+        if (SDL_GetAudioStreamFormat(stream_, &source, &device)) {
+            SDL_Log("Audio stream: source %d Hz/%d channel(s)/format 0x%x, device %d "
+                    "Hz/%d channel(s)/format 0x%x",
+                    source.freq, source.channels, unsigned(source.format), device.freq,
+                    device.channels, unsigned(device.format));
+        } else {
+            SDL_Log("Could not query audio stream format: %s", SDL_GetError());
+        }
         SDL_ResumeAudioStreamDevice(stream_);
-    else
+    } else
         SDL_Log("Audio unavailable: %s", SDL_GetError());
 }
 Audio::~Audio() {
@@ -32,6 +41,10 @@ void Audio::setVolume(float volume) {
     std::lock_guard<std::mutex> lock(mutex_);
     volume_ = std::clamp(volume, 0.0f, 2.0f);
 }
+AudioVoiceStats Audio::voiceStats() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {mixer_.activeVoices(), mixer_.peakVoices(), mixer_.replacedVoices()};
+}
 void Audio::play(const std::vector<Impact> &impacts) {
     if (!stream_ || impacts.empty())
         return;
@@ -45,8 +58,6 @@ void Audio::play(const std::vector<Impact> &impacts) {
                                         (tuning::heatBurnout - tuning::audioFadeHeat),
                                     0.0f, 1.0f);
         float liveness = tuning::normalizedHeatPower(hit.heat);
-        float detune = 1.0f +
-                       (hit.seed - .5f) * (tuning::baseDetune + tuning::heatDetune * liveness);
         float pitchPosition = std::clamp(
             tuning::heatPitchWeight * tuning::normalizedHeatPower(hit.heat) +
                 tuning::impactSpeedPitchWeight * hit.physicalStrength,
@@ -56,8 +67,7 @@ void Audio::play(const std::vector<Impact> &impacts) {
                                    tuning::massPitchExponent);
         float minimumPitch = tuning::minimumImpactFrequency * massScale;
         float maximumPitch = tuning::maximumImpactFrequency * massScale;
-        float pitch =
-            minimumPitch * std::pow(maximumPitch / minimumPitch, curvedPitch) * detune;
+        float pitch = minimumPitch * std::pow(maximumPitch / minimumPitch, curvedPitch);
         float amplitude =
             (tuning::baseImpactAmplitude +
              std::min(hit.strength, tuning::maximumAudioStrength) *
@@ -80,7 +90,7 @@ void Audio::play(const std::vector<Impact> &impacts) {
                                    weightingAmount * aWeightingDecibels;
         float maximumAmplitude = std::pow(10.0f, maximumRawDecibels / 20.0f);
         amplitude = std::min(amplitude, maximumAmplitude);
-        mixer_.trigger(pitch, amplitude);
+        mixer_.trigger(pitch, amplitude, hit.physicalStrength);
     }
 }
 void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional, int) {

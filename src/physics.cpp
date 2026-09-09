@@ -36,6 +36,7 @@ struct Object {
     float lastWallHit = -100;
     int lastWall = 0;
     float collisionLoad = 0;
+    float preStepSpeed = 0;
     float baseRestitution = 0;
     bool overheated = false;
 };
@@ -369,6 +370,11 @@ void Physics::step() {
         b2Body_ApplyLinearImpulseToCenter(object->bodyId, {delta.x * scale, delta.y * scale}, true);
     }
 
+    for (auto &object : state.objects) {
+        b2Vec2 velocity = b2Body_GetLinearVelocity(object.bodyId);
+        object.preStepSpeed = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    }
+
     b2World_Step(state.world, stepSize, 4);
 
     b2ContactEvents events = b2World_GetContactEvents(state.world);
@@ -431,20 +437,28 @@ void Physics::step() {
         }
 
         {
-            const Object *owner = nullptr;
-            for (auto &obj : state.objects)
-                if (obj.id == key.first || obj.id == key.second) {
-                    owner = &obj;
-                    break;
-                }
+            float seed = std::fmod(std::abs(std::sin(state.time * 91.7f + hit.point.x * 17.3f +
+                                                     hit.point.y * 37.1f)),
+                                   1.0f);
+            const Object *owner = objectA ? objectA : objectB;
+            if (objectA && objectB) {
+                const Object *first = objectA->id < objectB->id ? objectA : objectB;
+                const Object *second = first == objectA ? objectB : objectA;
+                float totalSpeed = first->preStepSpeed + second->preStepSpeed;
+                float chanceFirst = totalSpeed > 0 ? first->preStepSpeed / totalSpeed : 0.5f;
+                float ownerRoll = std::fmod(
+                    std::abs(std::sin(state.time * 53.1f + hit.point.x * 79.3f +
+                                      hit.point.y * 31.7f + key.first * 11.3f +
+                                      key.second * 7.1f) *
+                             43758.5453f),
+                    1.0f);
+                owner = ownerRoll < chanceFirst ? first : second;
+            }
             state.impacts.push_back(
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
-                  key.first, key.second, owner ? float(owner->shape) : 0.0f,
-                   owner ? state.bodyRotation(owner->bodyId) : 0.0f,
-                   std::fmod(std::abs(std::sin(state.time * 91.7f + hit.point.x * 17.3f +
-                                              hit.point.y * 37.1f)),
-                            1.0f),
-                   displayHeat});
+                   key.first, key.second, owner ? float(owner->shape) : 0.0f,
+                    owner ? state.bodyRotation(owner->bodyId) : 0.0f, seed,
+                    displayHeat});
             state.points += uint64_t(
                 (1.0f + physicalStrength * tuning::fullImpactPointBonus) * outputMultiplier);
         }

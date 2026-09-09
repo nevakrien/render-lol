@@ -67,10 +67,12 @@ inline constexpr float baseDetune = .04f;
 inline constexpr float heatDetune = .14f;
 inline constexpr float coldImpactFrequency = 320.0f;
 inline constexpr float hotImpactFrequency = 920.0f;
-inline constexpr float heatPitchSensitivity = 2.7f*heatBurnout / heatPeak;
+inline constexpr float heatPitchSensitivity = 2.2f*heatBurnout / heatPeak;
 inline constexpr float referenceImpactMass = 2.0f;
 inline constexpr float massPitchExponent = .25f;
 inline constexpr float baseImpactAmplitude = .05f;
 inline constexpr float impactAmplitudeScale = .17f;
 inline constexpr float maximumAudioStrength = 1.5f;
+inline constexpr float maximumAWeightedImpactDecibels = -24.0f;
+inline constexpr float impactAWeightingAmount = 1.0f;
 } // namespace toy::tuning

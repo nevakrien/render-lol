@@ -58,8 +58,25 @@ void Audio::play(const std::vector<Impact> &impacts) {
         float amplitude =
             (tuning::baseImpactAmplitude +
              std::min(hit.strength, tuning::maximumAudioStrength) *
-                 tuning::impactAmplitudeScale) *
-            (1.0f - critical);
+                  tuning::impactAmplitudeScale) *
+            liveness * (1.0f - critical);
+        // IEC 61672 A-weighting, used here as a relative digital loudness correction.
+        float frequencySquared = pitch * pitch;
+        constexpr float lowCornerSquared = 20.6f * 20.6f;
+        constexpr float middleLowSquared = 107.7f * 107.7f;
+        constexpr float middleHighSquared = 737.9f * 737.9f;
+        constexpr float highCornerSquared = 12200.0f * 12200.0f;
+        float response = highCornerSquared * frequencySquared * frequencySquared /
+                         ((frequencySquared + lowCornerSquared) *
+                          std::sqrt((frequencySquared + middleLowSquared) *
+                                    (frequencySquared + middleHighSquared)) *
+                          (frequencySquared + highCornerSquared));
+        float aWeightingDecibels = 20.0f * std::log10(response) + 2.0f;
+        float weightingAmount = std::clamp(tuning::impactAWeightingAmount, 0.0f, 1.0f);
+        float maximumRawDecibels = tuning::maximumAWeightedImpactDecibels -
+                                   weightingAmount * aWeightingDecibels;
+        float maximumAmplitude = std::pow(10.0f, maximumRawDecibels / 20.0f);
+        amplitude = std::min(amplitude, maximumAmplitude);
         mixer_.trigger(pitch, amplitude);
     }
 }

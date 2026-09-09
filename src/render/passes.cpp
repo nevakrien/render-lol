@@ -108,13 +108,14 @@ class Pipeline {
                 {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, shapeId)},
                 {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectAge)},
                 {5, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectSeed)},
-                {6, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectStrength)}};
+                {6, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectStrength)},
+                {7, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, effectFreshness)}};
             VkPipelineVertexInputStateCreateInfo vertex{};
             vertex.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
             if (mesh_) {
                 vertex.vertexBindingDescriptionCount = 1;
                 vertex.pVertexBindingDescriptions = &binding;
-                vertex.vertexAttributeDescriptionCount = 7;
+                vertex.vertexAttributeDescriptionCount = 8;
                 vertex.pVertexAttributeDescriptions = attributes;
             }
             VkPipelineInputAssemblyStateCreateInfo assembly{};
@@ -459,9 +460,10 @@ class ImpactPass final : public DrawPass {
                      color,
                      corners[i],
                      r.shapeId,
-                     r.age,
-                     r.seed,
-                     r.strength});
+                      r.age,
+                      r.seed,
+                      r.strength,
+                      r.freshness});
             }
         }
         mesh.upload();

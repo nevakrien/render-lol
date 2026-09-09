@@ -44,8 +44,6 @@ inline constexpr float collisionLoadFromStaleness = .35f;
 inline constexpr float routeFreshnessThreshold = .35f;
 inline constexpr float routeWindowSeconds = 2.5f;
 inline constexpr float adjacentWallMultiplier = 1.2f;
-inline constexpr float oppositeWallMultiplier = 2.0f;
-inline constexpr float oppositeWallHeatVent = .15f;
 
 // Physical response follows the same rise-and-fall shape as impact power.
 inline constexpr float peakRestitution = .99f;

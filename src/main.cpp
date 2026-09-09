@@ -442,7 +442,8 @@ int main(int argc, char **argv) {
                         if (hit.strength > toy::tuning::visibleImpactThreshold &&
                             frame.ripples.size() < 128)
                             frame.ripples.push_back({hit.point, hit.color, 0, hit.strength,
-                                                     hit.shapeId, hit.rotation, hit.seed});
+                                                     hit.shapeId, hit.rotation, hit.seed,
+                                                     hit.freshness});
                     }
                 }
                 for (auto &ripple : frame.ripples)

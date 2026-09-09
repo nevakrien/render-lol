@@ -4,6 +4,7 @@ layout(location = 0) in vec4 vertexColor;
 layout(location = 1) in vec2 local;
 layout(location = 2) in flat float shapeId;
 layout(location = 3) in vec3 effectData;
+layout(location = 4) in float freshness;
 
 layout(location = 0) out vec4 color;
 
@@ -47,5 +48,8 @@ void main() {
     float intensity = smoothstep(0.0, FULL_INTENSITY_STRENGTH, effectData.z);
     float alpha = ringBand * outerFade * intensity;
 
-    color = vec4(vertexColor.rgb, vertexColor.a * alpha);
+    float luminance = dot(vertexColor.rgb, vec3(0.299, 0.587, 0.114));
+    float saturation = freshness + 0.5 * smoothstep(0.8, 1.0, freshness);
+    vec3 impactColor = clamp(mix(vec3(luminance), vertexColor.rgb, saturation), 0.0, 1.0);
+    color = vec4(impactColor, vertexColor.a * alpha);
 }

@@ -67,9 +67,11 @@ struct Physics::Impl {
     uint64_t points = 0;
     bool gravity = false;
 
-    static bool oppositeWalls(int a, int b) {
-        return (a == -1 && b == -2) || (a == -2 && b == -1) ||
-               (a == -3 && b == -4) || (a == -4 && b == -3);
+    static bool adjacentWalls(int a, int b) {
+        if (a == 0 || b == 0 || a == b)
+            return false;
+        return !((a == -1 && b == -2) || (a == -2 && b == -1) ||
+                 (a == -3 && b == -4) || (a == -4 && b == -3));
     }
 
     Impl() {
@@ -415,16 +417,10 @@ void Physics::step() {
         int wallId = idA < 0 ? idA : (idB < 0 ? idB : 0);
         Object *wallHitter = objectA ? objectA : objectB;
         bool creditWall = wallId && wallHitter && freshness >= tuning::routeFreshnessThreshold;
-        bool ventHeat = false;
         if (creditWall) {
-            if (state.time - wallHitter->lastWallHit <= tuning::routeWindowSeconds) {
-                if (state.oppositeWalls(wallHitter->lastWall, wallId)) {
-                    routeMultiplier = tuning::oppositeWallMultiplier;
-                    ventHeat = true;
-                } else if (wallHitter->lastWall != 0 && wallHitter->lastWall != wallId) {
-                    routeMultiplier = tuning::adjacentWallMultiplier;
-                }
-            }
+            if (state.time - wallHitter->lastWallHit <= tuning::routeWindowSeconds &&
+                state.adjacentWalls(wallHitter->lastWall, wallId))
+                routeMultiplier = tuning::adjacentWallMultiplier;
         }
 
         float outputMultiplier = freshness * heatMultiplier * routeMultiplier;
@@ -458,7 +454,7 @@ void Physics::step() {
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
                    key.first, key.second, owner ? float(owner->shape) : 0.0f,
                     owner ? state.bodyRotation(owner->bodyId) : 0.0f, seed,
-                    displayHeat});
+                    displayHeat, freshness});
             state.points += uint64_t(
                 (1.0f + physicalStrength * tuning::fullImpactPointBonus) * outputMultiplier);
         }
@@ -468,9 +464,6 @@ void Physics::step() {
         if (creditWall) {
             wallHitter->lastWall = wallId;
             wallHitter->lastWallHit = state.time;
-            if (ventHeat)
-                wallHitter->heat =
-                    std::max(0.0f, wallHitter->heat - tuning::oppositeWallHeatVent);
         }
         float collisionLoad = tuning::collisionLoadBase +
                               physicalStrength * tuning::collisionLoadFromStrength +

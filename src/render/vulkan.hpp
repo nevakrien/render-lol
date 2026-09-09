@@ -16,6 +16,7 @@ struct Vertex {
     float effectAge = 0;
     float effectSeed = 0;
     float effectStrength = 0;
+    float effectFreshness = 0;
 };
 struct RenderFrame {
     std::vector<BodyView> bodies;
@@ -27,6 +28,7 @@ struct RenderFrame {
         float shapeId = 0;
         float rotation = 0;
         float seed = 0;
+        float freshness = 0;
     };
     std::vector<Ripple> ripples;
     bool wireframe = false;

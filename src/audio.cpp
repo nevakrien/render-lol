@@ -47,14 +47,17 @@ void Audio::play(const std::vector<Impact> &impacts) {
         float liveness = tuning::normalizedHeatPower(hit.heat);
         float detune = 1.0f +
                        (hit.seed - .5f) * (tuning::baseDetune + tuning::heatDetune * liveness);
-        float heatPosition = std::clamp(
-            hit.heat * tuning::heatPitchSensitivity / tuning::heatBurnout, 0.0f, 1.0f);
-        float curvedHeat = heatPosition * heatPosition * (3.0f - 2.0f * heatPosition);
+        float pitchPosition = std::clamp(
+            tuning::heatPitchWeight * tuning::normalizedHeatPower(hit.heat) +
+                tuning::impactSpeedPitchWeight * hit.physicalStrength,
+            0.0f, 1.0f);
+        float curvedPitch = pitchPosition * pitchPosition * (3.0f - 2.0f * pitchPosition);
         float massScale = std::pow(tuning::referenceImpactMass / hit.effectiveMass,
                                    tuning::massPitchExponent);
-        float coldPitch = tuning::coldImpactFrequency * massScale;
-        float hotPitch = tuning::hotImpactFrequency * massScale;
-        float pitch = coldPitch * std::pow(hotPitch / coldPitch, curvedHeat) * detune;
+        float minimumPitch = tuning::minimumImpactFrequency * massScale;
+        float maximumPitch = tuning::maximumImpactFrequency * massScale;
+        float pitch =
+            minimumPitch * std::pow(maximumPitch / minimumPitch, curvedPitch) * detune;
         float amplitude =
             (tuning::baseImpactAmplitude +
              std::min(hit.strength, tuning::maximumAudioStrength) *

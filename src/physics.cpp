@@ -443,7 +443,7 @@ void Physics::step() {
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
                    key.first, key.second, owner ? float(owner->shape) : 0.0f,
                     owner ? state.bodyRotation(owner->bodyId) : 0.0f, seed,
-                    displayHeat, freshness, effectiveMass});
+                    displayHeat, freshness, effectiveMass, physicalStrength});
             state.points += uint64_t(
                 (1.0f + physicalStrength * tuning::fullImpactPointBonus) * outputMultiplier);
         }

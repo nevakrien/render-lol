@@ -32,6 +32,7 @@ struct Impact {
     float heat = 0;
     float freshness = 0;
     float effectiveMass = 1;
+    float physicalStrength = 0;
 };
 struct PhysicsStats {
     int rigidContacts = 0;

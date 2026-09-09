@@ -62,14 +62,15 @@ inline constexpr int additionalCracks = 6;
 
 // Collision audio follows output power but fades further near burnout.
 inline constexpr float minimumAudibleImpact = .04f;
-inline constexpr float audioFadeHeat = .8f;
+inline constexpr float audioFadeHeat = .4f;
 inline constexpr float baseDetune = .04f;
 inline constexpr float heatDetune = .14f;
-inline constexpr float coldImpactFrequency = 320.0f;
-inline constexpr float hotImpactFrequency = 920.0f;
-inline constexpr float heatPitchSensitivity = 2.2f*heatBurnout / heatPeak;
+inline constexpr float minimumImpactFrequency = 320.0f;
+inline constexpr float maximumImpactFrequency = 600.0f;
+inline constexpr float heatPitchWeight = .41f;
+inline constexpr float impactSpeedPitchWeight = .59f;
 inline constexpr float referenceImpactMass = 2.0f;
-inline constexpr float massPitchExponent = .25f;
+inline constexpr float massPitchExponent = .35f;
 inline constexpr float baseImpactAmplitude = .05f;
 inline constexpr float impactAmplitudeScale = .17f;
 inline constexpr float maximumAudioStrength = 1.5f;

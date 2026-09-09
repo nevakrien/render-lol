@@ -2,9 +2,9 @@
 #include "physics.hpp"
 #include "sound_mixer.hpp"
 #include <SDL3/SDL.h>
-#include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 namespace toy {
 struct AudioVoiceStats {
     size_t active = 0;
@@ -24,10 +24,14 @@ class Audio {
     AudioVoiceStats voiceStats() const;
 
   private:
+    static constexpr int sampleRate = 48000;
+    std::vector<float> makeImpactSound(float frequency, float amplitude, float speed);
+    float randomUnit();
     static void SDLCALL feed(void *userdata, SDL_AudioStream *stream, int additional, int total);
     SDL_AudioStream *stream_ = nullptr;
     mutable std::mutex mutex_;
     SoundMixer mixer_;
+    uint32_t randomState_;
     bool muted_ = false;
     float volume_ = 1.0f;
 };

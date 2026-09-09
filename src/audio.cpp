@@ -3,14 +3,34 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <random>
 
 namespace toy {
-Audio::Audio() {
+namespace {
+constexpr float tau = 6.2831853f;
+
+float noiseSample(uint32_t seed, int age) {
+    uint32_t noise = seed + uint32_t(age) * 747796405u;
+    noise ^= noise >> 16;
+    noise *= 2246822519u;
+    noise ^= noise >> 13;
+    return float(noise & 0xffffu) / 32767.5f - 1.0f;
+}
+
+uint32_t entropySeed() {
+    std::random_device entropy;
+    uint32_t seed = entropy();
+    seed ^= entropy() + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+    return seed ? seed : 0x6d2b79f5u;
+}
+} // namespace
+
+Audio::Audio() : mixer_(tuning::maximumSimultaneousImpactVoices), randomState_(entropySeed()) {
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         SDL_Log("Audio unavailable: %s", SDL_GetError());
         return;
     }
-    SDL_AudioSpec spec{SDL_AUDIO_F32, 1, SoundMixer::sampleRate};
+    SDL_AudioSpec spec{SDL_AUDIO_F32, 1, sampleRate};
     stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, this);
     if (stream_) {
         SDL_AudioSpec source{}, device{};
@@ -44,6 +64,50 @@ void Audio::setVolume(float volume) {
 AudioVoiceStats Audio::voiceStats() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return {mixer_.activeVoices(), mixer_.peakVoices(), mixer_.replacedVoices()};
+}
+float Audio::randomUnit() {
+    randomState_ ^= randomState_ << 13;
+    randomState_ ^= randomState_ >> 17;
+    randomState_ ^= randomState_ << 5;
+    return float(randomState_ >> 8) / 16777216.0f;
+}
+std::vector<float> Audio::makeImpactSound(float frequency, float amplitude, float speed) {
+    const int duration = int(sampleRate * tuning::impactDurationSeconds);
+    std::vector<float> samples(static_cast<size_t>(duration));
+    float texture = std::pow(std::clamp(speed, 0.0f, 1.0f), tuning::impactTextureExponent);
+    float pitchVariation = tuning::basePitchVariation + tuning::texturePitchVariation * texture;
+    frequency *= 1.0f + (randomUnit() - .5f) * pitchVariation;
+    float phase = randomUnit() * tau * texture;
+    float secondModeRatio = tuning::secondModeFrequencyRatio +
+                            (randomUnit() - .5f) * tuning::secondModeRatioVariation * texture;
+    float thirdModeRatio = tuning::thirdModeFrequencyRatio +
+                           (randomUnit() - .5f) * tuning::thirdModeRatioVariation * texture;
+    uint32_t noiseSeed = randomState_;
+    randomUnit();
+    float attackSeconds = tuning::slowImpactAttackSeconds +
+                          (tuning::fastImpactAttackSeconds - tuning::slowImpactAttackSeconds) *
+                              texture;
+    float decayRate = tuning::baseToneDecayRate + tuning::speedToneDecayRate * texture;
+    float secondAmount = tuning::fastSecondModeAmount * texture;
+    float thirdAmount = tuning::fastThirdModeAmount * texture;
+    float fundamentalAmount = 1.0f - secondAmount - thirdAmount;
+    float noiseAmount = tuning::fastNoiseAmount * texture;
+    float releaseSamples = tuning::impactReleaseSeconds * sampleRate;
+    for (int age = 0; age < duration; ++age) {
+        float t = float(age) / sampleRate;
+        float attack = std::min(1.0f, t / attackSeconds);
+        float release = std::min(1.0f, float(duration - age) / releaseSamples);
+        float angle = tau * frequency * t + phase;
+        float tone = fundamentalAmount * std::sin(angle) +
+                     secondAmount * std::sin(secondModeRatio * angle) +
+                     thirdAmount * std::sin(thirdModeRatio * angle);
+        float noiseAttack = std::min(1.0f, t / tuning::noiseAttackSeconds);
+        float transient = noiseAmount * noiseAttack * std::exp(-tuning::noiseDecayRate * t) *
+                          noiseSample(noiseSeed, age);
+        samples[size_t(age)] =
+            amplitude * release * (attack * std::exp(-decayRate * t) * tone + transient);
+    }
+    return samples;
 }
 void Audio::play(const std::vector<Impact> &impacts) {
     if (!stream_ || impacts.empty())
@@ -90,7 +154,7 @@ void Audio::play(const std::vector<Impact> &impacts) {
                                    weightingAmount * aWeightingDecibels;
         float maximumAmplitude = std::pow(10.0f, maximumRawDecibels / 20.0f);
         amplitude = std::min(amplitude, maximumAmplitude);
-        mixer_.trigger(pitch, amplitude, hit.physicalStrength);
+        mixer_.play(makeImpactSound(pitch, amplitude, hit.physicalStrength));
     }
 }
 void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional, int) {
@@ -102,8 +166,17 @@ void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional
         {
             std::lock_guard<std::mutex> lock(self.mutex_);
             self.mixer_.render(samples.data(), size_t(count));
-            for (int i = 0; i < count; ++i)
+            for (int i = 0; i < count; ++i) {
+                float magnitude = std::abs(samples[i]);
+                if (magnitude > tuning::limiterThreshold) {
+                    float headroom = 1.0f - tuning::limiterThreshold;
+                    magnitude = tuning::limiterThreshold +
+                                headroom * std::tanh((magnitude - tuning::limiterThreshold) /
+                                                     headroom);
+                    samples[i] = std::copysign(magnitude, samples[i]);
+                }
                 samples[i] = std::clamp(samples[i] * self.volume_, -1.0f, 1.0f);
+            }
         }
         if (!SDL_PutAudioStreamData(stream, samples.data(), count * int(sizeof(float))))
             return;

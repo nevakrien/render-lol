@@ -1,19 +1,14 @@
 #pragma once
-#include "gameplay_tuning.hpp"
-#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace toy {
-// Sample-based state, independent of SDL and the simulation tick rate.
-// The caller synchronizes access when used across threads.
+// Retains and sums sample buffers. The caller synchronizes cross-thread access.
 class SoundMixer {
   public:
-    static constexpr int sampleRate = 48000;
-    static constexpr int duration = int(sampleRate * tuning::impactDurationSeconds);
-    SoundMixer();
-    explicit SoundMixer(uint32_t randomSeed);
-    void trigger(float frequency, float amplitude, float speed = 0.0f);
+    explicit SoundMixer(size_t maximumVoices);
+    void play(std::vector<float> samples);
     void render(float *output, size_t samples);
     void clear();
     size_t activeVoices() const { return activeVoices_; }
@@ -22,15 +17,12 @@ class SoundMixer {
 
   private:
     struct Voice {
-        float frequency = 0, amplitude = 0, texture = 0, phase = 0;
-        float secondModeRatio = 0, thirdModeRatio = 0;
-        uint32_t noiseSeed = 0;
-        int age = duration;
+        std::vector<float> samples;
+        size_t position = 0;
     };
-    float randomUnit();
 
-    std::array<Voice, tuning::maximumSimultaneousImpactVoices> voices_{};
-    uint32_t randomState_;
+    std::vector<Voice> voices_;
+    size_t maximumVoices_;
     size_t activeVoices_ = 0;
     size_t peakVoices_ = 0;
     uint64_t replacedVoices_ = 0;

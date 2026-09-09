@@ -46,7 +46,7 @@ android/.gradle/
 android/app/build/
 android/app/.cxx/
 android/build/
-/render-lol.apk
+# /render-lol.apk
 
 # CMake generated files
 CMakeFiles/

@@ -71,7 +71,8 @@ float Audio::randomUnit() {
     randomState_ ^= randomState_ << 5;
     return float(randomState_ >> 8) / 16777216.0f;
 }
-std::vector<float> Audio::makeImpactSound(float frequency, float amplitude, float speed) {
+std::vector<float> Audio::makeImpactSound(float frequency, float amplitude, float speed,
+                                          float maximumAmplitude) {
     const int duration = int(sampleRate * tuning::impactDurationSeconds);
     std::vector<float> samples(static_cast<size_t>(duration));
     float texture = std::pow(std::clamp(speed, 0.0f, 1.0f), tuning::impactTextureExponent);
@@ -106,6 +107,14 @@ std::vector<float> Audio::makeImpactSound(float frequency, float amplitude, floa
                           noiseSample(noiseSeed, age);
         samples[size_t(age)] =
             amplitude * release * (attack * std::exp(-decayRate * t) * tone + transient);
+    }
+    float peak = 0.0f;
+    for (float sample : samples)
+        peak = std::max(peak, std::abs(sample));
+    if (peak > maximumAmplitude) {
+        float scale = maximumAmplitude / peak;
+        for (float &sample : samples)
+            sample *= scale;
     }
     return samples;
 }
@@ -153,8 +162,7 @@ void Audio::play(const std::vector<Impact> &impacts) {
         float maximumRawDecibels = tuning::maximumAWeightedImpactDecibels -
                                    weightingAmount * aWeightingDecibels;
         float maximumAmplitude = std::pow(10.0f, maximumRawDecibels / 20.0f);
-        amplitude = std::min(amplitude, maximumAmplitude);
-        mixer_.play(makeImpactSound(pitch, amplitude, hit.physicalStrength));
+        mixer_.play(makeImpactSound(pitch, amplitude, hit.physicalStrength, maximumAmplitude));
     }
 }
 void SDLCALL Audio::feed(void *userdata, SDL_AudioStream *stream, int additional, int) {

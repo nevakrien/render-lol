@@ -65,13 +65,13 @@ inline constexpr int maximumSimultaneousImpactVoices = 1024;
 inline constexpr float minimumAudibleImpact = .04f;
 inline constexpr float audioFadeHeat = .4f;
 inline constexpr float minimumImpactFrequency = 300.0f;
-inline constexpr float maximumImpactFrequency = 393.0f;
+inline constexpr float maximumImpactFrequency = 453.0f;
 inline constexpr float heatPitchWeight = .90f;//0.0f;//.41f*0.03f;
 inline constexpr float impactSpeedPitchWeight = .10f;//0.0f;//.59f*0.03f;
 inline constexpr float referenceImpactMass = 2.0f;
 inline constexpr float massPitchExponent = .35f;
-inline constexpr float baseImpactAmplitude = .05f;
-inline constexpr float impactAmplitudeScale = .17f;
+inline constexpr float baseImpactAmplitude = .15f;
+inline constexpr float impactAmplitudeScale = .05f;
 inline constexpr float maximumAudioStrength = 1.5f;
 inline constexpr float maximumAWeightedImpactDecibels = -24.0f;
 inline constexpr float impactAWeightingAmount = 1.0f;
@@ -81,7 +81,7 @@ inline constexpr float impactDurationSeconds = .1f;
 inline constexpr float slowImpactAttackSeconds = .003f;
 inline constexpr float fastImpactAttackSeconds = .0005f;
 inline constexpr float impactReleaseSeconds = .005f;
-inline constexpr float impactTextureExponent = 2.5f;
+inline constexpr float impactTextureExponent = 1.2f;
 inline constexpr float baseToneDecayRate = 55.0f;
 inline constexpr float speedToneDecayRate = 80.0f;
 
@@ -91,14 +91,14 @@ inline constexpr float texturePitchVariation = .08f;
 
 // Each mode is a resonance at base pitch times this ratio. Values just above
 // 2x and 3x avoid perfectly aligned harmonics when many impacts overlap.
-inline constexpr float secondModeFrequencyRatio = 2.03f;
-inline constexpr float thirdModeFrequencyRatio = 3.12f;
+inline constexpr float secondModeFrequencyRatio = 1.30f;
+inline constexpr float thirdModeFrequencyRatio = 1.45f;
 inline constexpr float secondModeRatioVariation = .08f;
 inline constexpr float thirdModeRatioVariation = .12f;
-inline constexpr float fastSecondModeAmount = .20f;
-inline constexpr float fastThirdModeAmount = .14f;
+inline constexpr float fastSecondModeAmount = .12f;
+inline constexpr float fastThirdModeAmount = .07f;
 
-inline constexpr float fastNoiseAmount = .25f;
+inline constexpr float fastNoiseAmount = .19f;
 inline constexpr float noiseAttackSeconds = .0002f;
 inline constexpr float noiseDecayRate = 600.0f;
 inline constexpr float limiterThreshold = .12f;

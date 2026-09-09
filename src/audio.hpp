@@ -25,7 +25,8 @@ class Audio {
 
   private:
     static constexpr int sampleRate = 48000;
-    std::vector<float> makeImpactSound(float frequency, float amplitude, float speed);
+    std::vector<float> makeImpactSound(float frequency, float amplitude, float speed,
+                                       float maximumAmplitude);
     float randomUnit();
     static void SDLCALL feed(void *userdata, SDL_AudioStream *stream, int additional, int total);
     SDL_AudioStream *stream_ = nullptr;

@@ -31,6 +31,7 @@ struct Impact {
     float seed = 0;
     float heat = 0;
     float freshness = 0;
+    float effectiveMass = 1;
 };
 struct PhysicsStats {
     int rigidContacts = 0;

@@ -47,10 +47,14 @@ void Audio::play(const std::vector<Impact> &impacts) {
         float liveness = tuning::normalizedHeatPower(hit.heat);
         float detune = 1.0f +
                        (hit.seed - .5f) * (tuning::baseDetune + tuning::heatDetune * liveness);
-        float pitch = (tuning::baseImpactFrequency +
-                       float(std::abs(hit.b) % 7) * tuning::impactPitchStep) *
-                      detune;
-        pitch *= 1.0f - tuning::maximumPitchDrop * critical;
+        float heatPosition = std::clamp(
+            hit.heat * tuning::heatPitchSensitivity / tuning::heatBurnout, 0.0f, 1.0f);
+        float curvedHeat = heatPosition * heatPosition * (3.0f - 2.0f * heatPosition);
+        float massScale = std::pow(tuning::referenceImpactMass / hit.effectiveMass,
+                                   tuning::massPitchExponent);
+        float coldPitch = tuning::coldImpactFrequency * massScale;
+        float hotPitch = tuning::hotImpactFrequency * massScale;
+        float pitch = coldPitch * std::pow(hotPitch / coldPitch, curvedHeat) * detune;
         float amplitude =
             (tuning::baseImpactAmplitude +
              std::min(hit.strength, tuning::maximumAudioStrength) *

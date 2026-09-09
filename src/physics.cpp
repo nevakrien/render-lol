@@ -33,8 +33,6 @@ struct Object {
     b2BodyId bodyId = b2_nullBodyId;
     b2ShapeId shapeId = b2_nullShapeId;
     float heat = 0;
-    float lastWallHit = -100;
-    int lastWall = 0;
     float collisionLoad = 0;
     float preStepSpeed = 0;
     float baseRestitution = 0;
@@ -66,13 +64,6 @@ struct Physics::Impl {
     float time = 0;
     uint64_t points = 0;
     bool gravity = false;
-
-    static bool adjacentWalls(int a, int b) {
-        if (a == 0 || b == 0 || a == b)
-            return false;
-        return !((a == -1 && b == -2) || (a == -2 && b == -1) ||
-                 (a == -3 && b == -4) || (a == -4 && b == -3));
-    }
 
     Impl() {
         b2WorldDef def = b2DefaultWorldDef();
@@ -413,23 +404,21 @@ void Physics::step() {
         else if (objectB)
             heatMultiplier = tuning::heatPower(objectB->heat);
 
-        float routeMultiplier = 1.0f;
-        int wallId = idA < 0 ? idA : (idB < 0 ? idB : 0);
-        Object *wallHitter = objectA ? objectA : objectB;
-        bool creditWall = wallId && wallHitter && freshness >= tuning::routeFreshnessThreshold;
-        if (creditWall) {
-            if (state.time - wallHitter->lastWallHit <= tuning::routeWindowSeconds &&
-                state.adjacentWalls(wallHitter->lastWall, wallId))
-                routeMultiplier = tuning::adjacentWallMultiplier;
-        }
-
-        float outputMultiplier = freshness * heatMultiplier * routeMultiplier;
+        float outputMultiplier = freshness * heatMultiplier;
         float strength = physicalStrength * outputMultiplier;
         float displayHeat = 0;
         for (Object *object : {objectA, objectB}) {
             if (!object)
                 continue;
             displayHeat = std::max(displayHeat, object->heat);
+        }
+        float effectiveMass = 1.0f;
+        if (objectA && objectB) {
+            float massA = b2Body_GetMass(objectA->bodyId);
+            float massB = b2Body_GetMass(objectB->bodyId);
+            effectiveMass = massA * massB / (massA + massB);
+        } else if (Object *object = objectA ? objectA : objectB) {
+            effectiveMass = b2Body_GetMass(object->bodyId);
         }
 
         {
@@ -454,17 +443,13 @@ void Physics::step() {
                 {{hit.point.x, hit.point.y}, owner ? owner->color : palette[0], strength,
                    key.first, key.second, owner ? float(owner->shape) : 0.0f,
                     owner ? state.bodyRotation(owner->bodyId) : 0.0f, seed,
-                    displayHeat, freshness});
+                    displayHeat, freshness, effectiveMass});
             state.points += uint64_t(
                 (1.0f + physicalStrength * tuning::fullImpactPointBonus) * outputMultiplier);
         }
 
         // State changes happen after emission so the collision that crosses a
         // heat boundary still lands at its pre-impact power.
-        if (creditWall) {
-            wallHitter->lastWall = wallId;
-            wallHitter->lastWallHit = state.time;
-        }
         float collisionLoad = tuning::collisionLoadBase +
                               physicalStrength * tuning::collisionLoadFromStrength +
                               (1.0f - freshness) * tuning::collisionLoadFromStaleness;

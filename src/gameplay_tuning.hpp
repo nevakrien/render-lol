@@ -40,11 +40,6 @@ inline constexpr float collisionLoadBase = .55f;
 inline constexpr float collisionLoadFromStrength = .45f;
 inline constexpr float collisionLoadFromStaleness = .35f;
 
-// Wall routing rewards fresh movement around the arena.
-inline constexpr float routeFreshnessThreshold = .35f;
-inline constexpr float routeWindowSeconds = 2.5f;
-inline constexpr float adjacentWallMultiplier = 1.2f;
-
 // Physical response follows the same rise-and-fall shape as impact power.
 inline constexpr float peakRestitution = .99f;
 inline constexpr float burnoutRestitution = .15f;
@@ -70,9 +65,11 @@ inline constexpr float minimumAudibleImpact = .04f;
 inline constexpr float audioFadeHeat = .8f;
 inline constexpr float baseDetune = .04f;
 inline constexpr float heatDetune = .14f;
-inline constexpr float maximumPitchDrop = .08f;
-inline constexpr float baseImpactFrequency = 320.0f;
-inline constexpr float impactPitchStep = 70.0f;
+inline constexpr float coldImpactFrequency = 320.0f;
+inline constexpr float hotImpactFrequency = 920.0f;
+inline constexpr float heatPitchSensitivity = 2.7f*heatBurnout / heatPeak;
+inline constexpr float referenceImpactMass = 2.0f;
+inline constexpr float massPitchExponent = .25f;
 inline constexpr float baseImpactAmplitude = .05f;
 inline constexpr float impactAmplitudeScale = .17f;
 inline constexpr float maximumAudioStrength = 1.5f;

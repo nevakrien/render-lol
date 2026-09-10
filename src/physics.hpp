@@ -55,7 +55,7 @@ class Physics {
     void endDrag(DragId drag);
     void endAllDrags();
     bool dragging() const;
-    void setGravity(bool enabled);
+    void setGravity(bool enabled, float strength);
     std::vector<BodyView> snapshot() const;
     std::vector<Impact> takeImpacts();
     PhysicsStats stats() const;

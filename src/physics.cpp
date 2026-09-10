@@ -222,7 +222,7 @@ Physics::~Physics() = default;
 
 void Physics::reset(bool populate) {
     impl->clear();
-    setGravity(false);
+    setGravity(false, 0.0f);
     impl->addWall({-8.5f, 0}, {1, 11}, -1);
     impl->addWall({8.5f, 0}, {1, 11}, -2);
     impl->addWall({0, -5}, {16, 1}, -3);
@@ -289,9 +289,9 @@ int Physics::spawn(Shape shape, Vec2 position, Vec2 velocity) {
     return id;
 }
 
-void Physics::setGravity(bool enabled) {
+void Physics::setGravity(bool enabled, float strength) {
     impl->gravity = enabled;
-    b2World_SetGravity(impl->world, {0, enabled ? -9.8f : 0});
+    b2World_SetGravity(impl->world, {0, enabled ? -strength : 0.0f});
 }
 
 Physics::DragId Physics::beginDrag(Vec2 point) {

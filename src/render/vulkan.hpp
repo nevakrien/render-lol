@@ -36,6 +36,8 @@ struct RenderFrame {
     int menuScreen = 0;
     float volume = 1.0f;
     bool muted = false;
+    bool gravity = false;
+    float gravityStrength = 0.0f;
     int explosionSize = 2;
 };
 class Vulkan;

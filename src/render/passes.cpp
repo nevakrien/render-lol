@@ -531,7 +531,8 @@ const std::unordered_map<char, Glyph> font = {
     {'6', {14, 16, 16, 30, 17, 17, 14}}, {'7', {31, 1, 2, 4, 8, 8, 8}},
     {'8', {14, 17, 17, 14, 17, 17, 14}}, {'9', {14, 17, 17, 15, 1, 1, 14}},
     {'+', {0, 4, 4, 31, 4, 4, 0}},       {'/', {1, 2, 2, 4, 8, 8, 16}},
-    {'-', {0, 0, 0, 31, 0, 0, 0}},       {':', {0, 4, 4, 0, 4, 4, 0}}};
+    {'-', {0, 0, 0, 31, 0, 0, 0}},       {'.', {0, 0, 0, 0, 0, 4, 4}},
+    {':', {0, 4, 4, 0, 4, 4, 0}}};
 class HudPass final : public DrawPass {
     Pipeline pipeline;
     Mesh mesh;
@@ -562,13 +563,14 @@ class HudPass final : public DrawPass {
             Color label{.86f, .91f, 1};
             if (frame.menuScreen == 1) {
                 text("PAUSED", -1.35f, 1.95f, .075f, label);
-                for (float y : {.65f, -.25f, -1.15f, -2.05f})
+                for (float y : {.75f, -.05f, -.85f, -1.65f, -2.45f})
                     mesh.rect(-2.5f, y, 5, .7f, button);
-                text("RESUME", -.92f, 1.16f, .05f, label);
-                text("SETTINGS", -1.25f, .26f, .05f, label);
-                text("RESET", -.75f, -.64f, .05f, label);
-                text("QUIT", -.55f, -1.54f, .05f, {1, .58f, .48f});
-            } else {
+                text("RESUME", -.92f, 1.26f, .05f, label);
+                text("GRAVITY", -1.05f, .46f, .05f, label);
+                text("SETTINGS", -1.25f, -.34f, .05f, label);
+                text("RESET", -.75f, -1.14f, .05f, label);
+                text("QUIT", -.55f, -1.94f, .05f, {1, .58f, .48f});
+            } else if (frame.menuScreen == 2) {
                 text("SETTINGS", -1.65f, 1.95f, .075f, label);
                 text("VOLUME " + std::to_string(int(std::round(frame.volume * 50))), -1.35f,
                      1.31f, .045f, label);
@@ -590,6 +592,25 @@ class HudPass final : public DrawPass {
                      .05f, label);
                 mesh.rect(-2.5f, -2.1f, 5, .7f, button);
                 text("BACK", -.55f, -1.58f, .05f, label);
+            } else {
+                text("GRAVITY", -1.58f, 1.95f, .075f, label);
+
+                int gravityTenths = int(std::round(frame.gravityStrength * 10.0f));
+                std::string gravityValue = std::to_string(gravityTenths / 10) + "." +
+                                           std::to_string(gravityTenths % 10);
+                std::string strengthLabel = "STRENGTH " + gravityValue;
+                float strengthWidth = ((strengthLabel.size() - 1) * 6.0f + 4.9f) * .04f;
+                text(strengthLabel, -strengthWidth * .5f, 1.31f, .04f, label);
+                mesh.rect(-2.9f, .75f, 1, .7f, button);
+                mesh.rect(1.9f, .75f, 1, .7f, button);
+                text("-", -2.58f, 1.27f, .065f, label);
+                text("+", 2.19f, 1.27f, .065f, label);
+
+                mesh.rect(-2.5f, -.2f, 5, .7f, button);
+                text(std::string("GRAVITY ") + (frame.gravity ? "ON" : "OFF"), -1.65f,
+                     .32f, .05f, label);
+                mesh.rect(-2.5f, -1.15f, 5, .7f, button);
+                text("BACK", -.55f, -.63f, .05f, label);
             }
             mesh.upload();
             return;

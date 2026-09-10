@@ -79,10 +79,11 @@ fly, so editing a `.glsl` file and recompiling to `.spv` hot-reloads instantly.
 | --- | --- |
 | Left mouse / touch and drag | Grab, pull and release a body |
 | Pause button | Open the pause menu |
-| Pause menu | Resume, open settings, reset, or quit |
+| Pause menu | Resume, open gravity or general settings, reset, or quit |
 | Settings buttons | Change volume, mute audio, or select explosion size |
+| Gravity buttons | Toggle gravity or adjust its strength |
 
-Volume, mute, and collision-effect size are saved in `settings.ini` beside the executable
+Volume, mute, gravity strength, and collision-effect size are saved in `settings.ini` beside the executable
 (in internal app storage on Android). The score is stored separately as an 8-byte
 `score.bin` file. The default volume is 50%, with the previous output level at 50% and up
 to 2x gain available at 100%. `Big` is the default effect size.

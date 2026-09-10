@@ -21,6 +21,8 @@ struct AppSettings {
     float volume = 1.0f;
     bool muted = false;
     int explosionSize = 2;
+    bool gravityEnabled = false;
+    float gravityStrength = toy::tuning::defaultGravityStrength;
 };
 
 std::string settingsPath() {
@@ -54,6 +56,10 @@ AppSettings loadSettings(const std::string &path) {
             input >> settings.muted;
         else if (key == "explosion_size")
             input >> settings.explosionSize;
+        else if (key == "gravity_enabled")
+            input >> settings.gravityEnabled;
+        else if (key == "gravity_strength")
+            input >> settings.gravityStrength;
         else {
             std::string ignored;
             std::getline(input, ignored);
@@ -61,6 +67,9 @@ AppSettings loadSettings(const std::string &path) {
     }
     settings.volume = std::clamp(settings.volume, 0.0f, 2.0f);
     settings.explosionSize = std::clamp(settings.explosionSize, 0, 3);
+    settings.gravityStrength =
+        std::clamp(settings.gravityStrength, toy::tuning::minimumGravityStrength,
+                   toy::tuning::maximumGravityStrength);
     return settings;
 }
 
@@ -72,7 +81,9 @@ void saveSettings(const std::string &path, const AppSettings &settings) {
     }
     output << "volume " << settings.volume << '\n'
            << "muted " << settings.muted << '\n'
-           << "explosion_size " << settings.explosionSize << '\n';
+           << "explosion_size " << settings.explosionSize << '\n'
+           << "gravity_enabled " << settings.gravityEnabled << '\n'
+           << "gravity_strength " << settings.gravityStrength << '\n';
 }
 
 uint64_t loadScore(const std::string &path) {
@@ -178,9 +189,12 @@ int main(int argc, char **argv) {
         if (settings.muted)
             audio.toggleMute();
         saveSettings(configPath, settings);
-        bool running = true, paused = false, gravity = false, background = false;
-        int menuScreen = 0; // 0: game, 1: pause, 2: settings
+        bool running = true, paused = false, gravity = settings.gravityEnabled,
+             background = false;
+        int menuScreen = 0; // 0: game, 1: pause, 2: settings, 3: gravity
         int explosionSize = settings.explosionSize;
+        float gravityStrength = settings.gravityStrength;
+        physics.setGravity(gravity, gravityStrength);
         using TouchKey = std::pair<SDL_TouchID, SDL_FingerID>;
         std::map<TouchKey, toy::Physics::DragId> touchDrags;
         toy::Physics::DragId mouseDrag = 0;
@@ -193,20 +207,6 @@ int main(int argc, char **argv) {
             int w = 0, h = 0;
             SDL_GetWindowSize(window.get(), &w, &h);
             return toy::screenToWorld(x, y, w, h);
-        };
-        auto title = [&]() {
-            auto voices = audio.voiceStats();
-            std::string text = "render-lol | " +
-                               std::string(paused || menuScreen ? "PAUSED" : "playing") +
-                               " | gravity " +
-                                (gravity ? "on" : "off") + " | audio " +
-                                 (audio.muted() ? "off" : "on") + " | volume " +
-                                 std::to_string(int(audio.volume() * 50)) + "% | voices " +
-                                 std::to_string(voices.active) + "/" +
-                                 std::to_string(voices.peak) + "/" +
-                                 std::to_string(toy::tuning::maximumSimultaneousImpactVoices) +
-                                 " | replaced " + std::to_string(voices.replaced);
-            SDL_SetWindowTitle(window.get(), text.c_str());
         };
         auto inside = [](toy::Vec2 p, float x, float y, float w, float h) {
             return p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h;
@@ -225,23 +225,25 @@ int main(int argc, char **argv) {
                 menuScreen = 1;
                 cancelDrags();
             } else if (menuScreen == 1) {
-                if (inside(p, -2.5f, .65f, 5, .7f)) {
+                if (inside(p, -2.5f, .75f, 5, .7f)) {
                     menuScreen = 0;
                     paused = false;
-                } else if (inside(p, -2.5f, -.25f, 5, .7f))
+                } else if (inside(p, -2.5f, -.05f, 5, .7f))
+                    menuScreen = 3;
+                else if (inside(p, -2.5f, -.85f, 5, .7f))
                     menuScreen = 2;
-                else if (inside(p, -2.5f, -1.15f, 5, .7f)) {
+                else if (inside(p, -2.5f, -1.65f, 5, .7f)) {
                     cancelDrags();
                     physics.reset();
-                    gravity = false;
+                    physics.setGravity(gravity, gravityStrength);
                     paused = false;
                     frame.ripples.clear();
                     menuScreen = 0;
-                } else if (inside(p, -2.5f, -2.05f, 5, .7f))
+                } else if (inside(p, -2.5f, -2.45f, 5, .7f))
                     running = false;
                 else
                     return false;
-            } else {
+            } else if (menuScreen == 2) {
                 if (inside(p, -2.5f, .75f, 1.0f, .7f)) {
                     audio.setVolume(audio.volume() - .2f);
                     settingsChanged = true;
@@ -261,17 +263,36 @@ int main(int argc, char **argv) {
                     menuScreen = 1;
                 else
                     return false;
+            } else {
+                if (inside(p, -2.9f, .75f, 1.0f, .7f)) {
+                    gravityStrength = std::max(toy::tuning::minimumGravityStrength,
+                                               gravityStrength - toy::tuning::gravityStrengthStep);
+                    settingsChanged = true;
+                } else if (inside(p, 1.9f, .75f, 1.0f, .7f)) {
+                    gravityStrength = std::min(toy::tuning::maximumGravityStrength,
+                                               gravityStrength + toy::tuning::gravityStrengthStep);
+                    settingsChanged = true;
+                } else if (inside(p, -2.5f, -.2f, 5, .7f)) {
+                    gravity = !gravity;
+                    physics.setGravity(gravity, gravityStrength);
+                    settingsChanged = true;
+                } else if (inside(p, -2.5f, -1.15f, 5, .7f))
+                    menuScreen = 1;
+                else
+                    return false;
             }
             if (settingsChanged) {
                 settings.volume = audio.volume();
                 settings.muted = audio.muted();
                 settings.explosionSize = explosionSize;
+                settings.gravityEnabled = gravity;
+                settings.gravityStrength = gravityStrength;
                 saveSettings(configPath, settings);
+                if (gravity)
+                    physics.setGravity(true, gravityStrength);
             }
-            title();
             return true;
         };
-        title();
         while (running && (!frameLimit || frames < frameLimit)) {
             SDL_Event e;
             while (SDL_PollEvent(&e)) {
@@ -338,9 +359,8 @@ int main(int argc, char **argv) {
                     }
                 } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                     if (e.key.key == SDLK_ESCAPE) {
-                        menuScreen = menuScreen == 2 ? 1 : (menuScreen == 1 ? 0 : 1);
+                        menuScreen = menuScreen > 1 ? 1 : (menuScreen == 1 ? 0 : 1);
                         cancelDrags();
-                        title();
                         continue;
                     }
                     if (menuScreen != 0)
@@ -351,12 +371,14 @@ int main(int argc, char **argv) {
                         break;
                     case SDLK_G:
                         gravity = !gravity;
-                        physics.setGravity(gravity);
+                        physics.setGravity(gravity, gravityStrength);
+                        settings.gravityEnabled = gravity;
+                        saveSettings(configPath, settings);
                         break;
                     case SDLK_R:
                         cancelDrags();
                         physics.reset();
-                        gravity = false;
+                        physics.setGravity(gravity, gravityStrength);
                         frame.ripples.clear();
                         break;
                     case SDLK_W:
@@ -396,7 +418,6 @@ int main(int argc, char **argv) {
                     default:
                         break;
                     }
-                    title();
                 }
             }
             if (!running)
@@ -467,13 +488,13 @@ int main(int argc, char **argv) {
             frame.menuScreen = menuScreen;
             frame.volume = audio.volume();
             frame.muted = audio.muted();
+            frame.gravity = gravity;
+            frame.gravityStrength = gravityStrength;
             frame.explosionSize = explosionSize;
             bool captureNow = !capture.empty() && ((frameLimit && frames == frameLimit - 1) ||
                                                    (!frameLimit && frames == 0));
             if (renderer.draw(frame, captureNow ? capture : "")) {
                 ++frames;
-                if (frames % 15 == 0)
-                    title();
                 if (captureNow)
                     capture.clear();
             }

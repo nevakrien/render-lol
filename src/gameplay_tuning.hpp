@@ -1,6 +1,12 @@
 #pragma once
 
 namespace toy::tuning {
+// World gravity is exposed in settings; these values define its safe adjustment range.
+inline constexpr float defaultGravityStrength = 18.0f;
+inline constexpr float minimumGravityStrength = 1.0f;
+inline constexpr float maximumGravityStrength = 30.0f;
+inline constexpr float gravityStrengthStep = 1.0f;
+
 // Collision freshness and scoring.
 inline constexpr float fullImpactSpeed = 8.0f;
 inline constexpr float fullImpactPointBonus = 10.0f;
